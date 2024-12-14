@@ -1,14 +1,17 @@
 package models
 
-import "encoding/json"
+import (
+	"encoding/json"
+	"fmt"
+)
 
 type EventType string
 
 const (
-	PushEvent   EventType = "PushEvent"
-	IssuesEvent EventType = "IssuesEvent"
-	WatchEvent  EventType = "WatchEvent"
-	OtherEvent  EventType = "OtherEvent"
+	PushEvent    EventType = "PushEvent"
+	IssuesEvent  EventType = "IssuesEvent"
+	WatchEvent   EventType = "WatchEvent"
+	UnknownEvent EventType = "UnknownEvent"
 )
 
 type GithubEvent struct {
@@ -18,21 +21,25 @@ type GithubEvent struct {
 	} `json:"repo"`
 }
 
+func (e EventType) String() string {
+	return string(e)
+}
+
 func (e *EventType) UnmarshalJSON(data []byte) error {
 	var typeString string
 	if err := json.Unmarshal(data, &typeString); err != nil {
-		return err
+		return fmt.Errorf("failed to unmarshal event type: %w", err)
 	}
 
 	switch typeString {
-	case "PushEvent":
+	case string(PushEvent):
 		*e = PushEvent
-	case "IssuesEvent":
+	case string(IssuesEvent):
 		*e = IssuesEvent
-	case "WatchEvent":
+	case string(WatchEvent):
 		*e = WatchEvent
-	case "OtherEvent":
-		*e = OtherEvent
+	default:
+		*e = UnknownEvent
 	}
 
 	return nil
