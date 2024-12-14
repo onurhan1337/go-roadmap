@@ -14,11 +14,15 @@ import (
 const (
 	githubAPIBaseURL = "https://api.github.com"
 	defaultTimeout   = 10 * time.Second
+	maxRetries       = 3
+	retryDelay       = time.Second
 )
 
 type Client struct {
 	httpClient *http.Client
 	token      string
+	maxRetries int
+	retryDelay time.Duration
 }
 
 func NewClient(token string) *Client {
@@ -26,8 +30,47 @@ func NewClient(token string) *Client {
 		httpClient: &http.Client{
 			Timeout: defaultTimeout,
 		},
-		token: token,
+		token:      token,
+		maxRetries: maxRetries,
+		retryDelay: retryDelay,
 	}
+}
+
+func (c *Client) retryRequest(ctx context.Context, req *http.Request) (*http.Response, error) {
+	var lastErr error
+
+	for attempt := 0; attempt <= c.maxRetries; attempt++ {
+		newReq := req.Clone(ctx)
+
+		resp, err := c.httpClient.Do(newReq)
+		if err == nil {
+			if resp.StatusCode < 500 {
+				return resp, nil
+			}
+			resp.Body.Close()
+			lastErr = fmt.Errorf("server error: %d", resp.StatusCode)
+		} else {
+			lastErr = err
+		}
+
+		if attempt < c.maxRetries {
+			backoff := time.Duration(attempt+1) * c.retryDelay
+
+			timer := time.NewTimer(backoff)
+
+			select {
+			case <-ctx.Done():
+				timer.Stop()
+				return nil, ctx.Err()
+			case <-timer.C:
+				fmt.Printf("Retry attempt %d/%d after %v delay\n",
+					attempt+1, c.maxRetries, backoff)
+				continue
+			}
+		}
+	}
+
+	return nil, fmt.Errorf("failed after %d attempts: %w", c.maxRetries, lastErr)
 }
 
 func (c *Client) FetchUserEvents(ctx context.Context, username string) ([]models.GithubEvent, error) {
@@ -47,7 +90,7 @@ func (c *Client) FetchUserEvents(ctx context.Context, username string) ([]models
 	}
 	req.Header.Set("Accept", "application/vnd.github.v3+json")
 
-	response, err := c.httpClient.Do(req)
+	response, err := c.retryRequest(ctx, req)
 	if err != nil {
 		return nil, fmt.Errorf("failed to make API request: %w", err)
 	}
