@@ -68,9 +68,27 @@ func (c *Client) FetchUserEvents(ctx context.Context, username string) ([]models
 }
 
 func validateUsername(username string) error {
+	// Remove leading and trailing whitespace from the username
 	username = strings.TrimSpace(username)
 	if username == "" {
 		return fmt.Errorf("username cannot be empty")
+	}
+
+	// Validate username length according to GitHub's rules:
+	// - Minimum length: 1 character
+	// - Maximum length: 39 characters
+	if len(username) < models.GithubRules.MinLength || len(username) > models.GithubRules.MaxLength {
+		return fmt.Errorf("username length must be between %d and %d characters",
+			models.GithubRules.MinLength, models.GithubRules.MaxLength)
+	}
+
+	// Validate username format according to GitHub's rules:
+	// - Cannot start with a hyphen (-)
+	// - Cannot end with a hyphen (-)
+	// - Cannot contain consecutive hyphens (--)
+	if strings.HasPrefix(username, "-") || strings.HasSuffix(username, "-") ||
+		strings.Contains(username, "--") {
+		return fmt.Errorf("invalid username format: cannot start/end with hyphen or contain consecutive hyphens")
 	}
 
 	return nil

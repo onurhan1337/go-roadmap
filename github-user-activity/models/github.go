@@ -21,6 +21,18 @@ type GithubEvent struct {
 	} `json:"repo"`
 }
 
+type UsernameRules struct {
+	MaxLength    int
+	MinLength    int
+	AllowedChars string
+}
+
+var GithubRules = UsernameRules{
+	MaxLength:    39,
+	MinLength:    1,
+	AllowedChars: "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-",
+}
+
 func (e EventType) String() string {
 	return string(e)
 }
