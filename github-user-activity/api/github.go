@@ -1,36 +1,77 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"github-user-activity/models"
 	"io"
 	"net/http"
+	"strings"
+	"time"
 )
 
-func FetchUserEvents(username string) ([]models.GithubEvent, error) {
-	url := fmt.Sprintf("https://api.github.com/users/%s/events", username)
+const (
+	githubAPIBaseURL = "https://api.github.com"
+	defaultTimeout   = 10 * time.Second
+)
 
-	response, err := http.Get(url)
+type Client struct {
+	httpClient *http.Client
+	token      string
+}
+
+func NewClient(token string) *Client {
+	return &Client{
+		httpClient: &http.Client{
+			Timeout: defaultTimeout,
+		},
+		token: token,
+	}
+}
+
+func (c *Client) FetchUserEvents(ctx context.Context, username string) ([]models.GithubEvent, error) {
+	if err := validateUsername(username); err != nil {
+		return nil, err
+	}
+
+	url := fmt.Sprintf("%s/users/%s/events", githubAPIBaseURL, username)
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
-		return nil, fmt.Errorf("failed to make API request: %v", err)
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	if c.token != "" {
+		req.Header.Set("Authorization", "Bearer "+c.token)
+	}
+	req.Header.Set("Accept", "application/vnd.github.v3+json")
+
+	response, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to make API request: %w", err)
 	}
 	defer response.Body.Close()
 
 	if response.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("API Request failed with status code %d", response.StatusCode)
-	}
-
-	body, err := io.ReadAll(response.Body)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read response: %v", err)
+		body, _ := io.ReadAll(response.Body)
+		return nil, fmt.Errorf("API request failed with status code: %d: %s",
+			response.StatusCode, string(body))
 	}
 
 	var events []models.GithubEvent
-	err = json.Unmarshal(body, &events)
-	if err != nil {
-		return nil, fmt.Errorf("failed to parse JSON: %v", err)
+	if err := json.NewDecoder(response.Body).Decode(&events); err != nil {
+		return nil, fmt.Errorf("failed to parse JSON: %w", err)
 	}
 
 	return events, nil
+}
+
+func validateUsername(username string) error {
+	username = strings.TrimSpace(username)
+	if username == "" {
+		return fmt.Errorf("username cannot be empty")
+	}
+
+	return nil
 }
