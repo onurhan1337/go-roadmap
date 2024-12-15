@@ -31,20 +31,17 @@ func formatTable(events []models.GithubEvent) string {
 		return "No events found"
 	}
 
-	// Create table header
 	var sb strings.Builder
 	sb.WriteString("\n┌──────────────┬────────────────────────────────┐\n")
 	sb.WriteString("│ Event Type    │ Repository                     │\n")
 	sb.WriteString("├──────────────┼────────────────────────────────┤\n")
 
-	// Add table rows
 	for _, event := range events {
 		eventType := padRight(string(event.Type), 12)
 		repoName := padRight(event.Repo.Name, 30)
 		sb.WriteString(fmt.Sprintf("│ %s │ %s │\n", eventType, repoName))
 	}
 
-	// Add table footer
 	sb.WriteString("└──────────────┴────────────────────────────────┘\n")
 
 	return sb.String()
@@ -63,12 +60,32 @@ func formatSimple(events []models.GithubEvent) string {
 	for eventType, typeEvents := range eventGroups {
 		switch eventType {
 		case models.WatchEvent:
-			sb.WriteString("\n⭐ Repositories Starred:\n")
+			sb.WriteString("\n⭐ Repositories Starred:")
 		case models.PushEvent:
-			sb.WriteString("\n🔨 Code Contributions:\n")
-			// ... add other cases
+			sb.WriteString("\n🔨 Code Contributions:")
+		case models.ForkEvent:
+			sb.WriteString("\n🔱 Forked Repositories:")
+		case models.CreateEvent:
+			sb.WriteString("\n📝 Created Repositories/Branches:")
+		case models.DeleteEvent:
+			sb.WriteString("\n🗑️  Deleted Branches/Tags:")
+		case models.PullRequestEvent:
+			sb.WriteString("\n🔄 Pull Request Activity:")
+		case models.ReleaseEvent:
+			sb.WriteString("\n📦 Released Versions:")
+		case models.IssueCommentEvent:
+			sb.WriteString("\n💬 Issue Comments:")
+		case models.CommitCommentEvent:
+			sb.WriteString("\n💭 Commit Comments:")
+		case models.PublicEvent:
+			sb.WriteString("\n🌟 Made Public:")
+		case models.MemberEvent:
+			sb.WriteString("\n👥 Collaborator Activity:")
+		default:
+			sb.WriteString(fmt.Sprintf("\n❓ Other Activity (%s):", eventType))
 		}
 
+		sb.WriteString("\n")
 		for i, event := range typeEvents {
 			if i < 3 {
 				sb.WriteString(fmt.Sprintf("  • %s\n", event.Repo.Name))
