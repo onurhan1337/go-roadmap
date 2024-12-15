@@ -8,10 +8,19 @@ import (
 type EventType string
 
 const (
-	PushEvent    EventType = "PushEvent"
-	IssuesEvent  EventType = "IssuesEvent"
-	WatchEvent   EventType = "WatchEvent"
-	UnknownEvent EventType = "UnknownEvent"
+	PushEvent          EventType = "PushEvent"
+	IssuesEvent        EventType = "IssuesEvent"
+	WatchEvent         EventType = "WatchEvent"
+	ForkEvent          EventType = "ForkEvent"
+	CreateEvent        EventType = "CreateEvent"
+	DeleteEvent        EventType = "DeleteEvent"
+	PullRequestEvent   EventType = "PullRequestEvent"
+	ReleaseEvent       EventType = "ReleaseEvent"
+	IssueCommentEvent  EventType = "IssueCommentEvent"
+	CommitCommentEvent EventType = "CommitCommentEvent"
+	PublicEvent        EventType = "PublicEvent"
+	MemberEvent        EventType = "MemberEvent"
+	UnknownEvent       EventType = "UnknownEvent"
 )
 
 type GithubEvent struct {
@@ -50,6 +59,24 @@ func (e *EventType) UnmarshalJSON(data []byte) error {
 		*e = IssuesEvent
 	case string(WatchEvent):
 		*e = WatchEvent
+	case string(ForkEvent):
+		*e = ForkEvent
+	case string(CreateEvent):
+		*e = CreateEvent
+	case string(DeleteEvent):
+		*e = DeleteEvent
+	case string(PullRequestEvent):
+		*e = PullRequestEvent
+	case string(ReleaseEvent):
+		*e = ReleaseEvent
+	case string(IssueCommentEvent):
+		*e = IssueCommentEvent
+	case string(CommitCommentEvent):
+		*e = CommitCommentEvent
+	case string(PublicEvent):
+		*e = PublicEvent
+	case string(MemberEvent):
+		*e = MemberEvent
 	default:
 		*e = UnknownEvent
 	}

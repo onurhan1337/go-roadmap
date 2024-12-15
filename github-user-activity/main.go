@@ -82,27 +82,62 @@ func printEvents(events []models.GithubEvent) {
 		return
 	}
 
-	fmt.Println("Recent Activity:")
-	for i, event := range events {
-		if i >= maxEvents {
-			break
-		}
+	eventGroups := make(map[models.EventType][]models.GithubEvent)
+	for _, event := range events {
+		eventGroups[event.Type] = append(eventGroups[event.Type], event)
+	}
 
-		message := formatEventMessage(event)
-		fmt.Println(message)
+	fmt.Println("\nRecent Activity:")
+	fmt.Println("═══════════════")
+
+	for eventType, events := range eventGroups {
+		if len(events) > 0 {
+			switch eventType {
+			case models.WatchEvent:
+				fmt.Println("\n⭐ Repositories Starred:")
+			case models.PushEvent:
+				fmt.Println("\n🔨 Code Contributions:")
+			case models.ForkEvent:
+				fmt.Println("\n🔱 Repository Forks:")
+			case models.CreateEvent:
+				fmt.Println("\n📝 New Creations:")
+			case models.PullRequestEvent:
+				fmt.Println("\n🔄 Pull Requests:")
+			default:
+				fmt.Printf("\n%s:\n", eventType)
+			}
+
+			for i := 0; i < len(events) && i < 3; i++ {
+				fmt.Printf("  • %s\n", formatEventMessage(events[i]))
+			}
+
+			if len(events) > 3 {
+				fmt.Printf("  └─ and %d more...\n", len(events)-3)
+			}
+		}
 	}
 }
 
 func formatEventMessage(event models.GithubEvent) string {
 	switch event.Type {
 	case models.PushEvent:
-		return fmt.Sprintf("- Pushed commits to %s\n", event.Repo.Name)
+		return fmt.Sprintf("🔨 Pushed commits to %s", event.Repo.Name)
 	case models.IssuesEvent:
-		return fmt.Sprintf("- Opened issue in %s\n", event.Repo.Name)
+		return fmt.Sprintf("🐛 Opened issue in %s", event.Repo.Name)
 	case models.WatchEvent:
-		return fmt.Sprintf("- Starred %s\n", event.Repo.Name)
+		return fmt.Sprintf("⭐ Starred %s", event.Repo.Name)
+	case models.ForkEvent:
+		return fmt.Sprintf("🔱 Forked %s", event.Repo.Name)
+	case models.CreateEvent:
+		return fmt.Sprintf("📝 Created repository/branch in %s", event.Repo.Name)
+	case models.DeleteEvent:
+		return fmt.Sprintf("🗑️  Deleted branch/tag in %s", event.Repo.Name)
+	case models.PullRequestEvent:
+		return fmt.Sprintf("🔄 Pull request activity in %s", event.Repo.Name)
+	case models.ReleaseEvent:
+		return fmt.Sprintf("📦 Released version in %s", event.Repo.Name)
 	default:
-		return fmt.Sprintf("- %s in %s\n", "Other", event.Repo.Name)
+		return fmt.Sprintf("❓ %s in %s", string(event.Type), event.Repo.Name)
 	}
 }
 
