@@ -6,6 +6,13 @@ import (
 )
 
 type EventType string
+type OutputFormat string
+
+const (
+	SimpleFormat OutputFormat = "simple"
+	JSONFormat   OutputFormat = "json"
+	TableFormat  OutputFormat = "table"
+)
 
 const (
 	PushEvent          EventType = "PushEvent"

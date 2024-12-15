@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"github-user-activity/api"
+	"github-user-activity/formatters"
 	"github-user-activity/models"
 	"os"
 	"strings"
@@ -19,9 +20,19 @@ const (
 
 func main() {
 	client := api.NewClient(os.Getenv("GITHUB_TOKEN"))
+	format := models.SimpleFormat
+
+	if len(os.Args) > 1 {
+		switch os.Args[1] {
+		case "--json":
+			format = models.JSONFormat
+		case "--table":
+			format = models.TableFormat
+		}
+	}
 
 	for {
-		if err := run(client); err != nil {
+		if err := run(client, format); err != nil {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 			continue
 		}
@@ -31,7 +42,7 @@ func main() {
 	}
 }
 
-func run(client *api.Client) error {
+func run(client *api.Client, format models.OutputFormat) error {
 	printLogo()
 	printUsageInfo()
 
@@ -54,7 +65,7 @@ func run(client *api.Client) error {
 			rateLimit.ResetAt.Local().Format(time.Kitchen))
 	}
 
-	printEvents(events)
+	printEvents(events, format)
 	return nil
 }
 
@@ -76,46 +87,8 @@ func promptUsername() (string, error) {
 	return username, nil
 }
 
-func printEvents(events []models.GithubEvent) {
-	if len(events) == 0 {
-		fmt.Println("No recent activity found")
-		return
-	}
-
-	eventGroups := make(map[models.EventType][]models.GithubEvent)
-	for _, event := range events {
-		eventGroups[event.Type] = append(eventGroups[event.Type], event)
-	}
-
-	fmt.Println("\nRecent Activity:")
-	fmt.Println("═══════════════")
-
-	for eventType, events := range eventGroups {
-		if len(events) > 0 {
-			switch eventType {
-			case models.WatchEvent:
-				fmt.Println("\n⭐ Repositories Starred:")
-			case models.PushEvent:
-				fmt.Println("\n🔨 Code Contributions:")
-			case models.ForkEvent:
-				fmt.Println("\n🔱 Repository Forks:")
-			case models.CreateEvent:
-				fmt.Println("\n📝 New Creations:")
-			case models.PullRequestEvent:
-				fmt.Println("\n🔄 Pull Requests:")
-			default:
-				fmt.Printf("\n%s:\n", eventType)
-			}
-
-			for i := 0; i < len(events) && i < 3; i++ {
-				fmt.Printf("  • %s\n", formatEventMessage(events[i]))
-			}
-
-			if len(events) > 3 {
-				fmt.Printf("  └─ and %d more...\n", len(events)-3)
-			}
-		}
-	}
+func printEvents(events []models.GithubEvent, format models.OutputFormat) {
+	fmt.Print(formatters.FormatOutput(events, format))
 }
 
 func formatEventMessage(event models.GithubEvent) string {
