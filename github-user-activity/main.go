@@ -18,13 +18,20 @@ const (
 )
 
 func main() {
-	if err := run(); err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(1)
+	client := api.NewClient(os.Getenv("GITHUB_TOKEN"))
+
+	for {
+		if err := run(client); err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			continue
+		}
+
+		fmt.Print("\nPress Enter to check again (Ctrl+C to exit): ")
+		bufio.NewReader(os.Stdin).ReadString('\n')
 	}
 }
 
-func run() error {
+func run(client *api.Client) error {
 	printLogo()
 	printUsageInfo()
 
@@ -33,14 +40,6 @@ func run() error {
 		return fmt.Errorf("failed to read username: %w", err)
 	}
 
-	token := os.Getenv("GITHUB_TOKEN")
-	if token == "" {
-		fmt.Println("\n⚠️  No GitHub token found. Running with limited rate limits.")
-		fmt.Println("   Set GITHUB_TOKEN environment variable for better rate limits:")
-		fmt.Println("   export GITHUB_TOKEN=your_token_here")
-	}
-
-	client := api.NewClient(token)
 	ctx, cancel := context.WithTimeout(context.Background(), eventTimeout)
 	defer cancel()
 

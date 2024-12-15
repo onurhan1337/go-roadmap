@@ -26,12 +26,19 @@ type RateLimit struct {
 	ResetAt   time.Time
 }
 
+type CachedResponse struct {
+	Events    []models.GithubEvent
+	Timestamp time.Time
+}
+
 type Client struct {
 	httpClient *http.Client
 	token      string
 	maxRetries int
 	retryDelay time.Duration
 	rateLimit  *RateLimit
+	cache      map[string]CachedResponse
+	cacheTTL   time.Duration
 }
 
 func NewClient(token string) *Client {
@@ -42,6 +49,8 @@ func NewClient(token string) *Client {
 		token:      token,
 		maxRetries: maxRetries,
 		retryDelay: retryDelay,
+		cache:      make(map[string]CachedResponse),
+		cacheTTL:   30 * time.Second,
 	}
 }
 
@@ -110,6 +119,27 @@ func (c *Client) retryRequest(ctx context.Context, req *http.Request) (*http.Res
 }
 
 func (c *Client) FetchUserEvents(ctx context.Context, username string) ([]models.GithubEvent, error) {
+	if cached, ok := c.cache[username]; ok {
+		if time.Since(cached.Timestamp) < c.cacheTTL {
+			fmt.Println("📦 Returning cached data")
+			return cached.Events, nil
+		}
+	}
+
+	events, err := c.fetchFromAPI(ctx, username)
+	if err != nil {
+		return nil, err
+	}
+
+	c.cache[username] = CachedResponse{
+		Events:    events,
+		Timestamp: time.Now(),
+	}
+
+	return events, nil
+}
+
+func (c *Client) fetchFromAPI(ctx context.Context, username string) ([]models.GithubEvent, error) {
 	if err := validateUsername(username); err != nil {
 		return nil, err
 	}
@@ -122,7 +152,6 @@ func (c *Client) FetchUserEvents(ctx context.Context, username string) ([]models
 	}
 
 	url := fmt.Sprintf("%s/users/%s/events", githubAPIBaseURL, username)
-
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
@@ -143,7 +172,7 @@ func (c *Client) FetchUserEvents(ctx context.Context, username string) ([]models
 
 	if response.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(response.Body)
-		return nil, fmt.Errorf("API request failed with status code: %d: %s",
+		return nil, fmt.Errorf("API request failed with status code %d: %s",
 			response.StatusCode, string(body))
 	}
 
