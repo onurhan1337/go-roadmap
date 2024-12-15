@@ -7,22 +7,31 @@ import (
 	"github-user-activity/models"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 )
 
 const (
-	githubAPIBaseURL = "https://api.github.com"
-	defaultTimeout   = 10 * time.Second
-	maxRetries       = 3
-	retryDelay       = time.Second
+	githubAPIBaseURL     = "https://api.github.com"
+	defaultTimeout       = 10 * time.Second
+	maxRetries           = 3
+	retryDelay           = time.Second
+	headerRateLimit      = "X-RateLimit-Remaining"
+	headerRateLimitReset = "X-RateLimit-Reset"
 )
+
+type RateLimit struct {
+	Remaining int
+	ResetAt   time.Time
+}
 
 type Client struct {
 	httpClient *http.Client
 	token      string
 	maxRetries int
 	retryDelay time.Duration
+	rateLimit  *RateLimit
 }
 
 func NewClient(token string) *Client {
@@ -34,6 +43,33 @@ func NewClient(token string) *Client {
 		maxRetries: maxRetries,
 		retryDelay: retryDelay,
 	}
+}
+
+func (c *Client) checkRateLimit(resp *http.Response) {
+	remaining := resp.Header.Get(headerRateLimit)
+	reset := resp.Header.Get(headerRateLimitReset)
+
+	if remaining != "" {
+		if rem, err := strconv.Atoi(remaining); err == nil {
+			if c.rateLimit == nil {
+				c.rateLimit = &RateLimit{}
+			}
+			c.rateLimit.Remaining = rem
+		}
+	}
+
+	if reset != "" {
+		if resetTime, err := strconv.ParseInt(reset, 10, 64); err == nil {
+			if c.rateLimit == nil {
+				c.rateLimit = &RateLimit{}
+			}
+			c.rateLimit.ResetAt = time.Unix(resetTime, 0)
+		}
+	}
+}
+
+func (c *Client) GetRateLimit() *RateLimit {
+	return c.rateLimit
 }
 
 func (c *Client) retryRequest(ctx context.Context, req *http.Request) (*http.Response, error) {
@@ -78,6 +114,13 @@ func (c *Client) FetchUserEvents(ctx context.Context, username string) ([]models
 		return nil, err
 	}
 
+	if c.rateLimit != nil && c.rateLimit.Remaining == 0 {
+		waitTime := time.Until(c.rateLimit.ResetAt)
+		if waitTime > 0 {
+			return nil, fmt.Errorf("rate limit exceeded, resets in %v", waitTime.Round(time.Second))
+		}
+	}
+
 	url := fmt.Sprintf("%s/users/%s/events", githubAPIBaseURL, username)
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
@@ -95,6 +138,8 @@ func (c *Client) FetchUserEvents(ctx context.Context, username string) ([]models
 		return nil, fmt.Errorf("failed to make API request: %w", err)
 	}
 	defer response.Body.Close()
+
+	c.checkRateLimit(response)
 
 	if response.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(response.Body)

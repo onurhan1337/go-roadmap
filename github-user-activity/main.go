@@ -46,7 +46,13 @@ func run() error {
 
 	events, err := client.FetchUserEvents(ctx, username)
 	if err != nil {
-		return fmt.Errorf("failed to fetch events: %w", err)
+		return err
+	}
+
+	if rateLimit := client.GetRateLimit(); rateLimit != nil {
+		fmt.Printf("\nRate limit remaining: %d (resets at %s)\n",
+			rateLimit.Remaining,
+			rateLimit.ResetAt.Local().Format(time.Kitchen))
 	}
 
 	printEvents(events)
