@@ -13,11 +13,12 @@ func printUsage() {
 	ui.PrintLogo()
 	fmt.Println("Usage: task-cli <command> [arguments]")
 	fmt.Println("\nCommands:")
-	fmt.Println("  add <description>            Add a new task")
-	fmt.Println("  update <id> <description>    Update an existing task")
-	fmt.Println("  delete <id>                  Delete a task")
-	fmt.Println("  mark-in-progress <id>        Mark a task as in progress")
-	fmt.Println("  mark-done <id>               Mark a task as done")
+	fmt.Println("  add <description> <priority>             Add a new task")
+	fmt.Println("  update <id> <description> <priority>     Update an existing task")
+	fmt.Println("  set-priority <id> <priority>             Set the priority of a task")
+	fmt.Println("  delete <id>                              Delete a task")
+	fmt.Println("  mark-in-progress <id>                    Mark a task as in progress")
+	fmt.Println("  mark-done <id>                           Mark a task as done")
 	fmt.Println("  list [done|todo|in-progress] List tasks with optional status filter")
 }
 
@@ -41,6 +42,8 @@ func main() {
 	switch command {
 	case "add":
 		cmdErr = h.HandleAdd(args)
+	case "set-priority":
+		cmdErr = h.HandleSetPriority(args)
 	case "update":
 		cmdErr = h.HandleUpdate(args)
 	case "delete":
