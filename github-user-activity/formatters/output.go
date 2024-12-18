@@ -13,8 +13,10 @@ func FormatOutput(events []models.GithubEvent, format models.OutputFormat) strin
 		return formatJSON(events)
 	case models.TableFormat:
 		return formatTable(events)
-	default:
+	case models.SimpleFormat:
 		return formatSimple(events)
+	default:
+		return ""
 	}
 }
 
