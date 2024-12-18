@@ -170,6 +170,113 @@ func (h *CommandHandler) HandleMarkStatus(args []string, status string) error {
 	return nil
 }
 
+func (h *CommandHandler) HandleAddTag(args []string) error {
+	if len(args) < 1 {
+		return fmt.Errorf("usage: task-cli add-tag <tag>")
+	}
+	tag := strings.ToLower(args[0])
+
+	if added := h.tasks.AddTag(tag); !added {
+		return fmt.Errorf("tag '%s' already exists", tag)
+	}
+
+	if err := storage.SaveTasks(h.tasks); err != nil {
+		return fmt.Errorf("error saving tags: %v", err)
+	}
+
+	fmt.Printf("Tag '%s' added successfully\n", tag)
+	return nil
+}
+
+func (h *CommandHandler) HandleListTags(args []string) error {
+	if len(h.tasks.Tags) == 0 {
+		fmt.Println("No tags found")
+		return nil
+	}
+
+	fmt.Println("\nAvailable tags:")
+	for _, tag := range h.tasks.Tags {
+		fmt.Printf("  • %s\n", tag)
+	}
+	return nil
+}
+
+func (h *CommandHandler) HandleAddTaskTag(args []string) error {
+	if len(args) < 2 {
+		return fmt.Errorf("usage: task-cli add-task-tag <task-id> <tag>")
+	}
+
+	id := 0
+	if _, err := fmt.Sscanf(args[0], "%d", &id); err != nil {
+		return fmt.Errorf("invalid ID format")
+	}
+	tag := strings.ToLower(args[1])
+
+	if !h.tasks.HasTag(tag) {
+		return fmt.Errorf("tag '%s' does not exist. Add it first using add-tag command", tag)
+	}
+
+	_, task := storage.FindTaskByID(h.tasks, id)
+	if task == nil {
+		return fmt.Errorf("task with ID %d not found", id)
+	}
+
+	for _, t := range task.Tags {
+		if t == tag {
+			return fmt.Errorf("task already has tag '%s'", tag)
+		}
+	}
+
+	task.Tags = append(task.Tags, tag)
+	task.UpdatedAt = time.Now()
+
+	if err := storage.SaveTasks(h.tasks); err != nil {
+		return fmt.Errorf("error saving task: %v", err)
+	}
+
+	fmt.Printf("Tag '%s' added to task %d\n", tag, id)
+	return nil
+}
+
+func (h *CommandHandler) HandleRemoveTaskTag(args []string) error {
+	if len(args) < 2 {
+		return fmt.Errorf("usage: task-cli remove-task-tag <task-id> <tag>")
+	}
+
+	id := 0
+	if _, err := fmt.Sscanf(args[0], "%d", &id); err != nil {
+		return fmt.Errorf("invalid ID format")
+	}
+	tag := strings.ToLower(args[1])
+
+	_, task := storage.FindTaskByID(h.tasks, id)
+	if task == nil {
+		return fmt.Errorf("task with ID %d not found", id)
+	}
+
+	found := false
+	for i, t := range task.Tags {
+		if t == tag {
+			task.Tags = append(task.Tags[:i], task.Tags[i+1:]...)
+			found = true
+			break
+		}
+	}
+
+	if !found {
+		return fmt.Errorf("task does not have tag '%s'", tag)
+	}
+
+	task.UpdatedAt = time.Now()
+
+	if err := storage.SaveTasks(h.tasks); err != nil {
+		return fmt.Errorf("error saving task: %v", err)
+	}
+
+	fmt.Printf("Tag '%s' removed from task %d\n", tag, id)
+	return nil
+}
+
 const (
 	colorReset  = "\033[0m"
 	colorRed    = "\033[31m"
@@ -212,7 +319,7 @@ type Table struct {
 }
 
 func createTable(tasks []model.Task, filterStatus string) *Table {
-	headers := []string{"ID", "Status", "Description", "Created", "Updated", "Priority"}
+	headers := []string{"ID", "Status", "Description", "Created", "Updated", "Priority", "Tags"}
 	var rows [][]string
 
 	colWidths := make([]int, len(headers))
@@ -221,32 +328,39 @@ func createTable(tasks []model.Task, filterStatus string) *Table {
 	}
 
 	for _, task := range tasks {
-		if filterStatus == "" || task.Status == filterStatus ||
-			(filterStatus == model.StatusTodo && task.Status == model.StatusTodo) {
-			row := []string{
-				fmt.Sprintf("%d", task.ID),
-				getStatusColor(task.Status),
-				truncateString(task.Description, 40),
-				task.CreatedAt.Format("2006-01-02"),
-				task.UpdatedAt.Format("2006-01-02"),
-				getPriorityString(task.Priority),
-			}
-
-			for i, cell := range row {
-				cleanCell := strings.ReplaceAll(cell, colorReset, "")
-				cleanCell = strings.ReplaceAll(cleanCell, colorRed, "")
-				cleanCell = strings.ReplaceAll(cleanCell, colorGreen, "")
-				cleanCell = strings.ReplaceAll(cleanCell, colorYellow, "")
-				cleanCell = strings.ReplaceAll(cleanCell, colorBlue, "")
-				cleanCell = strings.ReplaceAll(cleanCell, colorPurple, "")
-				cleanCell = strings.ReplaceAll(cleanCell, colorCyan, "")
-
-				if len(cleanCell) > colWidths[i] {
-					colWidths[i] = len(cleanCell)
-				}
-			}
-			rows = append(rows, row)
+		if filterStatus != "" && task.Status != filterStatus {
+			continue
 		}
+
+		tagsStr := strings.Join(task.Tags, ", ")
+		if tagsStr == "" {
+			tagsStr = "-"
+		}
+
+		row := []string{
+			fmt.Sprintf("%d", task.ID),
+			getStatusColor(task.Status),
+			truncateString(task.Description, 40),
+			task.CreatedAt.Format("2006-01-02"),
+			task.UpdatedAt.Format("2006-01-02"),
+			getPriorityString(task.Priority),
+			colorCyan + tagsStr + colorReset,
+		}
+
+		for i, cell := range row {
+			cleanCell := strings.ReplaceAll(cell, colorReset, "")
+			cleanCell = strings.ReplaceAll(cleanCell, colorRed, "")
+			cleanCell = strings.ReplaceAll(cleanCell, colorGreen, "")
+			cleanCell = strings.ReplaceAll(cleanCell, colorYellow, "")
+			cleanCell = strings.ReplaceAll(cleanCell, colorBlue, "")
+			cleanCell = strings.ReplaceAll(cleanCell, colorPurple, "")
+			cleanCell = strings.ReplaceAll(cleanCell, colorCyan, "")
+
+			if len(cleanCell) > colWidths[i] {
+				colWidths[i] = len(cleanCell)
+			}
+		}
+		rows = append(rows, row)
 	}
 
 	totalWidth := 1
@@ -268,7 +382,7 @@ func (t *Table) print() {
 	for i, width := range t.ColWidths {
 		fmt.Print(strings.Repeat("─", width+2))
 		if i < len(t.ColWidths)-1 {
-			fmt.Print("┬")
+			fmt.Print("┴")
 		}
 	}
 	fmt.Println("╮")
