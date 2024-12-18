@@ -131,12 +131,10 @@ func (h *CommandHandler) HandleList(args []string) error {
 		return nil
 	}
 
-	// Print header
 	fmt.Println("\n╭" + strings.Repeat("─", 90) + "╮")
 	fmt.Printf("│ %-4s │ %-11s │ %-40s │ %-14s │ %-12s │\n", "ID", "Status", "Description", "Created", "Updated")
 	fmt.Println("├" + strings.Repeat("─", 6) + "┼" + strings.Repeat("─", 13) + "┼" + strings.Repeat("─", 42) + "┼" + strings.Repeat("─", 16) + "┼" + strings.Repeat("─", 14) + "┤")
 
-	// Print tasks
 	for _, task := range h.tasks.Tasks {
 		if filterStatus == "" || task.Status == filterStatus ||
 			(filterStatus == model.StatusTodo && task.Status == model.StatusTodo) {
@@ -149,7 +147,6 @@ func (h *CommandHandler) HandleList(args []string) error {
 		}
 	}
 
-	// Print footer
 	fmt.Println("╰" + strings.Repeat("─", 90) + "╯")
 	return nil
 }
