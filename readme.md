@@ -38,3 +38,27 @@ A tool to fetch and display GitHub user activities with features like:
 - Error handling
 - Timeout management
 - Data modeling and formatting
+
+### [Bookstore API](bookstore-api/)
+
+A modern RESTful API for managing a bookstore's inventory, built with Go, Gin, GORM, and PostgreSQL.
+
+**Features:**
+
+- RESTful API endpoints for book management
+- PostgreSQL database with GORM ORM
+- Swagger documentation
+- Docker and Docker Compose setup
+- ISBN validation
+- Structured project layout
+
+**Key Concepts Learned:**
+
+- Web API development with Gin
+- Database operations with GORM
+- Docker containerization
+- API documentation with Swagger
+- Custom validation
+- Project structuring
+- Environment configuration
+- Health checks and monitoring
