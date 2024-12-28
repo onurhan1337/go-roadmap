@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"log"
 	"log/slog"
 	"os"
 	"os/signal"
@@ -10,7 +11,10 @@ import (
 	"golang.org/x/sync/errgroup"
 
 	"ledger-link/config"
+	"ledger-link/internal/database"
 	"ledger-link/pkg/logger"
+
+	"github.com/joho/godotenv"
 )
 
 type App struct {
@@ -54,6 +58,24 @@ func (a *App) Run() error {
 }
 
 func main() {
+	// Load environment variables
+	if err := godotenv.Load(); err != nil {
+		log.Fatal("Error loading .env file")
+	}
+
+	// Initialize database
+	db, err := database.InitDB()
+	if err != nil {
+		log.Fatalf("Failed to initialize database: %v", err)
+	}
+
+	// Get underlying *sql.DB
+	sqlDB, err := db.DB()
+	if err != nil {
+		log.Fatalf("Failed to get database instance: %v", err)
+	}
+	defer sqlDB.Close()
+
 	cfg, err := config.Load()
 	if err != nil {
 		slog.Error("failed to load configuration", "error", err)
