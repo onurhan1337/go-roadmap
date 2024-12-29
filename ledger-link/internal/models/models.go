@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"errors"
 	"net/mail"
+	"regexp"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -18,13 +20,19 @@ var (
 	ErrInvalidAmount   = errors.New("amount must be greater than 0")
 	ErrInvalidStatus   = errors.New("invalid transaction status")
 	ErrInvalidType     = errors.New("invalid transaction type")
+	ErrInvalidRole     = errors.New("invalid user role")
+)
+
+const (
+	RoleUser  = "user"
+	RoleAdmin = "admin"
 )
 
 type User struct {
 	ID           uint           `gorm:"primaryKey" json:"id"`
 	Username     string         `gorm:"uniqueIndex;not null" json:"username"`
 	Email        string         `gorm:"uniqueIndex;not null" json:"email"`
-	PasswordHash string         `gorm:"not null" json:"-"` // "-" excludes from JSON
+	PasswordHash string         `gorm:"not null" json:"-"`
 	Role         string         `gorm:"not null;default:'user'" json:"role"`
 	Balance      Balance        `gorm:"foreignKey:UserID" json:"balance"`
 	CreatedAt    time.Time      `gorm:"not null" json:"created_at"`
@@ -32,12 +40,44 @@ type User struct {
 	DeletedAt    gorm.DeletedAt `gorm:"index" json:"-"`
 }
 
-func (u *User) Validate() error {
-	if len(u.Username) < 3 || len(u.Username) > 30 {
+func (u *User) ValidateUsername() error {
+	username := strings.TrimSpace(u.Username)
+	if len(username) < 3 || len(username) > 30 {
 		return ErrInvalidUsername
 	}
-	if _, err := mail.ParseAddress(u.Email); err != nil {
+	matched, err := regexp.MatchString("^[a-zA-Z0-9_-]+$", username)
+	if err != nil || !matched {
+		return errors.New("username can only contain letters, numbers, underscores, and hyphens")
+	}
+	return nil
+}
+
+func (u *User) ValidateEmail() error {
+	email := strings.TrimSpace(u.Email)
+	if _, err := mail.ParseAddress(email); err != nil {
 		return ErrInvalidEmail
+	}
+	return nil
+}
+
+func (u *User) ValidateRole() error {
+	switch u.Role {
+	case RoleUser, RoleAdmin:
+		return nil
+	default:
+		return ErrInvalidRole
+	}
+}
+
+func (u *User) Validate() error {
+	if err := u.ValidateUsername(); err != nil {
+		return err
+	}
+	if err := u.ValidateEmail(); err != nil {
+		return err
+	}
+	if err := u.ValidateRole(); err != nil {
+		return err
 	}
 	if len(u.PasswordHash) < 8 {
 		return ErrInvalidPassword
@@ -45,11 +85,45 @@ func (u *User) Validate() error {
 	return nil
 }
 
+func (u *User) IsAdmin() bool {
+	return u.Role == RoleAdmin
+}
+
+func (u *User) BeforeCreate(tx *gorm.DB) error {
+	if u.Role == "" {
+		u.Role = RoleUser
+	}
+	return u.Validate()
+}
+
+func (u *User) BeforeUpdate(tx *gorm.DB) error {
+	return u.Validate()
+}
+
+func (u *User) SafeCopy() *User {
+	copy := &User{
+		ID:        u.ID,
+		Username:  u.Username,
+		Email:     u.Email,
+		Role:      u.Role,
+		CreatedAt: u.CreatedAt,
+		UpdatedAt: u.UpdatedAt,
+	}
+	if u.Balance.UserID != 0 {
+		copy.Balance = Balance{
+			UserID:        u.Balance.UserID,
+			Amount:        u.Balance.SafeAmount(),
+			LastUpdatedAt: u.Balance.LastUpdatedAt,
+		}
+	}
+	return copy
+}
+
 func (u *User) MarshalJSON() ([]byte, error) {
-	type Alias User // Use type alias to avoid recursion
+	type Alias User
 	return json.Marshal(&struct {
 		*Alias
-		PasswordHash string `json:"-"` // Explicitly exclude password
+		PasswordHash string `json:"-"`
 	}{
 		Alias: (*Alias)(u),
 	})
@@ -126,15 +200,15 @@ func (t *Transaction) IsValidStatus(status TransactionStatus) bool {
 
 type Balance struct {
 	UserID        uint           `gorm:"primaryKey" json:"user_id"`
-	amount        int64          `gorm:"-" json:"-"`                       // Internal atomic counter
-	Amount        float64        `gorm:"not null;default:0" json:"amount"` // For GORM and JSON
+	amount        int64          `gorm:"-" json:"-"`
+	Amount        float64        `gorm:"not null;default:0" json:"amount"`
 	LastUpdatedAt time.Time      `gorm:"not null" json:"last_updated_at"`
 	DeletedAt     gorm.DeletedAt `gorm:"index" json:"-"`
-	mu            sync.RWMutex   `gorm:"-" json:"-"` // For complex operations
+	mu            sync.RWMutex   `gorm:"-" json:"-"`
 }
 
 func (b *Balance) AfterFind(tx *gorm.DB) error {
-	atomic.StoreInt64(&b.amount, int64(b.Amount*1e8)) // Store as fixed-point number
+	atomic.StoreInt64(&b.amount, int64(b.Amount*1e8))
 	return nil
 }
 
