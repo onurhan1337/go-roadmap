@@ -3,7 +3,11 @@ package models
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/mail"
+	"regexp"
+	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -18,13 +22,37 @@ var (
 	ErrInvalidAmount   = errors.New("amount must be greater than 0")
 	ErrInvalidStatus   = errors.New("invalid transaction status")
 	ErrInvalidType     = errors.New("invalid transaction type")
+	ErrInvalidRole     = errors.New("invalid user role")
+)
+
+const (
+	RoleUser  = "user"
+	RoleAdmin = "admin"
+
+	StatusPending   TransactionStatus = "pending"
+	StatusCompleted TransactionStatus = "completed"
+	StatusFailed    TransactionStatus = "failed"
+	StatusCancelled TransactionStatus = "cancelled"
+
+	TypeTransfer    TransactionType = "transfer"
+	TypeDeposit     TransactionType = "deposit"
+	TypeWithdrawal  TransactionType = "withdrawal"
+	TypeAdjustment  TransactionType = "adjustment"
+
+	EntityTypeUser        = "user"
+	EntityTypeTransaction = "transaction"
+	EntityTypeBalance     = "balance"
+
+	ActionCreate = "create"
+	ActionUpdate = "update"
+	ActionDelete = "delete"
 )
 
 type User struct {
 	ID           uint           `gorm:"primaryKey" json:"id"`
 	Username     string         `gorm:"uniqueIndex;not null" json:"username"`
 	Email        string         `gorm:"uniqueIndex;not null" json:"email"`
-	PasswordHash string         `gorm:"not null" json:"-"` // "-" excludes from JSON
+	PasswordHash string         `gorm:"not null" json:"-"`
 	Role         string         `gorm:"not null;default:'user'" json:"role"`
 	Balance      Balance        `gorm:"foreignKey:UserID" json:"balance"`
 	CreatedAt    time.Time      `gorm:"not null" json:"created_at"`
@@ -32,12 +60,44 @@ type User struct {
 	DeletedAt    gorm.DeletedAt `gorm:"index" json:"-"`
 }
 
-func (u *User) Validate() error {
-	if len(u.Username) < 3 || len(u.Username) > 30 {
+func (u *User) ValidateUsername() error {
+	username := strings.TrimSpace(u.Username)
+	if len(username) < 3 || len(username) > 30 {
 		return ErrInvalidUsername
 	}
-	if _, err := mail.ParseAddress(u.Email); err != nil {
+	matched, err := regexp.MatchString("^[a-zA-Z0-9_-]+$", username)
+	if err != nil || !matched {
+		return errors.New("username can only contain letters, numbers, underscores, and hyphens")
+	}
+	return nil
+}
+
+func (u *User) ValidateEmail() error {
+	email := strings.TrimSpace(u.Email)
+	if _, err := mail.ParseAddress(email); err != nil {
 		return ErrInvalidEmail
+	}
+	return nil
+}
+
+func (u *User) ValidateRole() error {
+	switch u.Role {
+	case RoleUser, RoleAdmin:
+		return nil
+	default:
+		return ErrInvalidRole
+	}
+}
+
+func (u *User) Validate() error {
+	if err := u.ValidateUsername(); err != nil {
+		return err
+	}
+	if err := u.ValidateEmail(); err != nil {
+		return err
+	}
+	if err := u.ValidateRole(); err != nil {
+		return err
 	}
 	if len(u.PasswordHash) < 8 {
 		return ErrInvalidPassword
@@ -45,11 +105,45 @@ func (u *User) Validate() error {
 	return nil
 }
 
+func (u *User) IsAdmin() bool {
+	return u.Role == RoleAdmin
+}
+
+func (u *User) BeforeCreate(tx *gorm.DB) error {
+	if u.Role == "" {
+		u.Role = RoleUser
+	}
+	return u.Validate()
+}
+
+func (u *User) BeforeUpdate(tx *gorm.DB) error {
+	return u.Validate()
+}
+
+func (u *User) SafeCopy() *User {
+	copy := &User{
+		ID:        u.ID,
+		Username:  u.Username,
+		Email:     u.Email,
+		Role:      u.Role,
+		CreatedAt: u.CreatedAt,
+		UpdatedAt: u.UpdatedAt,
+	}
+	if u.Balance.UserID != 0 {
+		copy.Balance = Balance{
+			UserID:        u.Balance.UserID,
+			Amount:        u.Balance.SafeAmount(),
+			LastUpdatedAt: u.Balance.LastUpdatedAt,
+		}
+	}
+	return copy
+}
+
 func (u *User) MarshalJSON() ([]byte, error) {
-	type Alias User // Use type alias to avoid recursion
+	type Alias User
 	return json.Marshal(&struct {
 		*Alias
-		PasswordHash string `json:"-"` // Explicitly exclude password
+		PasswordHash string `json:"-"`
 	}{
 		Alias: (*Alias)(u),
 	})
@@ -57,16 +151,6 @@ func (u *User) MarshalJSON() ([]byte, error) {
 
 type TransactionStatus string
 type TransactionType string
-
-const (
-	StatusPending   TransactionStatus = "pending"
-	StatusCompleted TransactionStatus = "completed"
-	StatusFailed    TransactionStatus = "failed"
-
-	TypeTransfer   TransactionType = "transfer"
-	TypeDeposit    TransactionType = "deposit"
-	TypeWithdrawal TransactionType = "withdrawal"
-)
 
 type Transaction struct {
 	ID         uint              `gorm:"primaryKey" json:"id"`
@@ -77,7 +161,9 @@ type Transaction struct {
 	Amount     float64           `gorm:"not null" json:"amount"`
 	Type       TransactionType   `gorm:"not null" json:"type"`
 	Status     TransactionStatus `gorm:"not null" json:"status"`
+	Notes      string            `gorm:"type:text" json:"notes,omitempty"`
 	CreatedAt  time.Time         `gorm:"not null" json:"created_at"`
+	UpdatedAt  time.Time         `gorm:"not null" json:"updated_at"`
 	DeletedAt  gorm.DeletedAt    `gorm:"index" json:"-"`
 }
 
@@ -86,25 +172,37 @@ func (t *Transaction) Validate() error {
 		return ErrInvalidAmount
 	}
 
-	validStatus := map[TransactionStatus]bool{
-		StatusPending:   true,
-		StatusCompleted: true,
-		StatusFailed:    true,
-	}
-	if !validStatus[t.Status] {
-		return ErrInvalidStatus
-	}
-
-	validType := map[TransactionType]bool{
-		TypeTransfer:   true,
-		TypeDeposit:    true,
-		TypeWithdrawal: true,
-	}
-	if !validType[t.Type] {
+	if !t.IsValidType(t.Type) {
 		return ErrInvalidType
 	}
 
+	if !t.IsValidStatus(t.Status) {
+		return ErrInvalidStatus
+	}
+
+	if t.Type == TypeTransfer && (t.FromUserID == 0 || t.ToUserID == 0) {
+		return errors.New("transfer requires both from and to users")
+	}
+
 	return nil
+}
+
+func (t *Transaction) IsValidType(txType TransactionType) bool {
+	switch txType {
+	case TypeTransfer, TypeDeposit, TypeWithdrawal, TypeAdjustment:
+		return true
+	default:
+		return false
+	}
+}
+
+func (t *Transaction) IsValidStatus(status TransactionStatus) bool {
+	switch status {
+	case StatusPending, StatusCompleted, StatusFailed, StatusCancelled:
+		return true
+	default:
+		return false
+	}
 }
 
 func (t *Transaction) UpdateStatus(status TransactionStatus) error {
@@ -115,43 +213,102 @@ func (t *Transaction) UpdateStatus(status TransactionStatus) error {
 	return nil
 }
 
-func (t *Transaction) IsValidStatus(status TransactionStatus) bool {
-	validStatus := map[TransactionStatus]bool{
-		StatusPending:   true,
-		StatusCompleted: true,
-		StatusFailed:    true,
+func (t *Transaction) MarshalJSON() ([]byte, error) {
+	type Alias Transaction
+	return json.Marshal(&struct {
+		*Alias
+		CreatedAt string `json:"created_at"`
+		UpdatedAt string `json:"updated_at"`
+	}{
+		Alias:     (*Alias)(t),
+		CreatedAt: t.CreatedAt.Format(time.RFC3339),
+		UpdatedAt: t.UpdatedAt.Format(time.RFC3339),
+	})
+}
+
+func (t *Transaction) UnmarshalJSON(data []byte) error {
+	type Alias Transaction
+	aux := &struct {
+		*Alias
+		CreatedAt string `json:"created_at"`
+		UpdatedAt string `json:"updated_at"`
+	}{
+		Alias: (*Alias)(t),
 	}
-	return validStatus[status]
+
+	if err := json.Unmarshal(data, &aux); err != nil {
+		return err
+	}
+
+	var err error
+	t.CreatedAt, err = time.Parse(time.RFC3339, aux.CreatedAt)
+	if err != nil {
+		return err
+	}
+
+	t.UpdatedAt, err = time.Parse(time.RFC3339, aux.UpdatedAt)
+	if err != nil {
+		return err
+	}
+
+	return nil
 }
 
 type Balance struct {
 	UserID        uint           `gorm:"primaryKey" json:"user_id"`
-	amount        int64          `gorm:"-" json:"-"`                       // Internal atomic counter
-	Amount        float64        `gorm:"not null;default:0" json:"amount"` // For GORM and JSON
+	amount        int64          `gorm:"-" json:"-"`
+	Amount        float64        `gorm:"not null;default:0" json:"amount"`
 	LastUpdatedAt time.Time      `gorm:"not null" json:"last_updated_at"`
+	UpdatedAt     time.Time      `gorm:"not null" json:"updated_at"`
+	CreatedAt     time.Time      `gorm:"not null" json:"created_at"`
 	DeletedAt     gorm.DeletedAt `gorm:"index" json:"-"`
-	mu            sync.RWMutex   `gorm:"-" json:"-"` // For complex operations
+	mu            sync.RWMutex   `gorm:"-" json:"-"`
+}
+
+func (b *Balance) Validate() error {
+	if b.Amount < 0 {
+		return errors.New("balance cannot be negative")
+	}
+	if b.UserID == 0 {
+		return errors.New("user ID is required")
+	}
+	return nil
+}
+
+func (b *Balance) BeforeCreate(tx *gorm.DB) error {
+	if err := b.Validate(); err != nil {
+		return err
+	}
+	b.LastUpdatedAt = time.Now()
+	return nil
+}
+
+func (b *Balance) BeforeUpdate(tx *gorm.DB) error {
+	if err := b.Validate(); err != nil {
+		return err
+	}
+	b.LastUpdatedAt = time.Now()
+	return nil
 }
 
 func (b *Balance) AfterFind(tx *gorm.DB) error {
-	atomic.StoreInt64(&b.amount, int64(b.Amount*1e8)) // Store as fixed-point number
+	atomic.StoreInt64(&b.amount, int64(b.Amount*100))
 	return nil
 }
 
 func (b *Balance) BeforeSave(tx *gorm.DB) error {
-	b.Amount = float64(atomic.LoadInt64(&b.amount)) / 1e8
+	b.Amount = float64(atomic.LoadInt64(&b.amount)) / 100
 	return nil
 }
 
 func (b *Balance) SafeAmount() float64 {
-	return float64(atomic.LoadInt64(&b.amount)) / 1e8
+	return float64(atomic.LoadInt64(&b.amount)) / 100
 }
 
 func (b *Balance) UpdateAmount(amount float64) {
-	atomic.StoreInt64(&b.amount, int64(amount*1e8))
-	b.mu.Lock()
+	atomic.StoreInt64(&b.amount, int64(amount*100))
+	b.Amount = amount
 	b.LastUpdatedAt = time.Now()
-	b.mu.Unlock()
 }
 
 func (b *Balance) AddAmount(amount float64) error {
@@ -159,16 +316,12 @@ func (b *Balance) AddAmount(amount float64) error {
 		return ErrInvalidAmount
 	}
 
-	amountInt := int64(amount * 1e8)
-	for {
-		current := atomic.LoadInt64(&b.amount)
-		if atomic.CompareAndSwapInt64(&b.amount, current, current+amountInt) {
-			b.mu.Lock()
-			b.LastUpdatedAt = time.Now()
-			b.mu.Unlock()
-			return nil
-		}
-	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	newAmount := b.SafeAmount() + amount
+	b.UpdateAmount(newAmount)
+	return nil
 }
 
 func (b *Balance) SubtractAmount(amount float64) error {
@@ -176,51 +329,165 @@ func (b *Balance) SubtractAmount(amount float64) error {
 		return ErrInvalidAmount
 	}
 
-	amountInt := int64(amount * 1e8)
-	for {
-		current := atomic.LoadInt64(&b.amount)
-		if current < amountInt {
-			return errors.New("insufficient balance")
-		}
-		if atomic.CompareAndSwapInt64(&b.amount, current, current-amountInt) {
-			b.mu.Lock()
-			b.LastUpdatedAt = time.Now()
-			b.mu.Unlock()
-			return nil
-		}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	currentAmount := b.SafeAmount()
+	if currentAmount < amount {
+		return errors.New("insufficient balance")
 	}
+
+	newAmount := currentAmount - amount
+	b.UpdateAmount(newAmount)
+	return nil
 }
 
 func (b *Balance) MarshalJSON() ([]byte, error) {
 	type Alias Balance
 	return json.Marshal(&struct {
 		*Alias
-		Amount float64 `json:"amount"`
+		Amount        string `json:"amount"`
+		LastUpdatedAt string `json:"last_updated_at"`
+		CreatedAt     string `json:"created_at"`
+		UpdatedAt     string `json:"updated_at"`
 	}{
-		Alias:  (*Alias)(b),
-		Amount: b.SafeAmount(),
+		Alias:         (*Alias)(b),
+		Amount:        fmt.Sprintf("%.2f", b.SafeAmount()),
+		LastUpdatedAt: b.LastUpdatedAt.Format(time.RFC3339),
+		CreatedAt:     b.CreatedAt.Format(time.RFC3339),
+		UpdatedAt:     b.UpdatedAt.Format(time.RFC3339),
 	})
+}
+
+func (b *Balance) UnmarshalJSON(data []byte) error {
+	type Alias Balance
+	aux := &struct {
+		*Alias
+		Amount        string `json:"amount"`
+		LastUpdatedAt string `json:"last_updated_at"`
+		CreatedAt     string `json:"created_at"`
+		UpdatedAt     string `json:"updated_at"`
+	}{
+		Alias: (*Alias)(b),
+	}
+
+	if err := json.Unmarshal(data, &aux); err != nil {
+		return err
+	}
+
+	amount, err := strconv.ParseFloat(aux.Amount, 64)
+	if err != nil {
+		return err
+	}
+	b.UpdateAmount(amount)
+
+	b.LastUpdatedAt, err = time.Parse(time.RFC3339, aux.LastUpdatedAt)
+	if err != nil {
+		return err
+	}
+
+	b.CreatedAt, err = time.Parse(time.RFC3339, aux.CreatedAt)
+	if err != nil {
+		return err
+	}
+
+	b.UpdatedAt, err = time.Parse(time.RFC3339, aux.UpdatedAt)
+	if err != nil {
+		return err
+	}
+
+	return nil
 }
 
 type AuditLog struct {
 	ID         uint           `gorm:"primaryKey" json:"id"`
 	EntityType string         `gorm:"index;not null" json:"entity_type"`
-	EntityID   uint           `gorm:"index;not null" json:"entity_id"`
+	EntityID   uint          `gorm:"index;not null" json:"entity_id"`
 	Action     string         `gorm:"not null" json:"action"`
 	Details    string         `gorm:"type:text" json:"details"`
+	UserID     uint          `gorm:"index;not null" json:"user_id"`
+	User       User          `gorm:"foreignKey:UserID" json:"user"`
 	CreatedAt  time.Time      `gorm:"not null" json:"created_at"`
+	UpdatedAt  time.Time      `gorm:"not null" json:"updated_at"`
 	DeletedAt  gorm.DeletedAt `gorm:"index" json:"-"`
 }
 
 func (a *AuditLog) Validate() error {
-	if a.EntityType == "" {
-		return errors.New("entity type is required")
-	}
 	if a.EntityID == 0 {
 		return errors.New("entity ID is required")
+	}
+	if a.EntityType == "" {
+		return errors.New("entity type is required")
 	}
 	if a.Action == "" {
 		return errors.New("action is required")
 	}
+	if a.UserID == 0 {
+		return errors.New("user ID is required")
+	}
+
+	switch a.EntityType {
+	case EntityTypeUser, EntityTypeTransaction, EntityTypeBalance:
+		// valid entity type
+	default:
+		return errors.New("invalid entity type")
+	}
+
+	switch a.Action {
+	case ActionCreate, ActionUpdate, ActionDelete:
+		// valid action
+	default:
+		return errors.New("invalid action")
+	}
+
+	return nil
+}
+
+func (a *AuditLog) BeforeCreate(tx *gorm.DB) error {
+	return a.Validate()
+}
+
+func (a *AuditLog) BeforeUpdate(tx *gorm.DB) error {
+	return a.Validate()
+}
+
+func (a *AuditLog) MarshalJSON() ([]byte, error) {
+	type Alias AuditLog
+	return json.Marshal(&struct {
+		*Alias
+		CreatedAt string `json:"created_at"`
+		UpdatedAt string `json:"updated_at"`
+	}{
+		Alias:     (*Alias)(a),
+		CreatedAt: a.CreatedAt.Format(time.RFC3339),
+		UpdatedAt: a.UpdatedAt.Format(time.RFC3339),
+	})
+}
+
+func (a *AuditLog) UnmarshalJSON(data []byte) error {
+	type Alias AuditLog
+	aux := &struct {
+		*Alias
+		CreatedAt string `json:"created_at"`
+		UpdatedAt string `json:"updated_at"`
+	}{
+		Alias: (*Alias)(a),
+	}
+
+	if err := json.Unmarshal(data, &aux); err != nil {
+		return err
+	}
+
+	var err error
+	a.CreatedAt, err = time.Parse(time.RFC3339, aux.CreatedAt)
+	if err != nil {
+		return err
+	}
+
+	a.UpdatedAt, err = time.Parse(time.RFC3339, aux.UpdatedAt)
+	if err != nil {
+		return err
+	}
+
 	return nil
 }
