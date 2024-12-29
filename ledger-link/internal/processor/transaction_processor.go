@@ -17,6 +17,7 @@ type TransactionProcessor struct {
 	auditSvc       models.AuditService
 	logger         *logger.Logger
 	wg             sync.WaitGroup
+	done           chan struct{}
 }
 
 type ProcessorConfig struct {
@@ -43,6 +44,7 @@ func NewTransactionProcessor(cfg ProcessorConfig) *TransactionProcessor {
 		balanceSvc:     cfg.BalanceSvc,
 		auditSvc:       cfg.AuditSvc,
 		logger:         cfg.Logger,
+		done:           make(chan struct{}),
 	}
 }
 
@@ -58,6 +60,7 @@ func (p *TransactionProcessor) Start(ctx context.Context) error {
 		<-ctx.Done()
 		p.logger.Info("shutting down transaction processor")
 		close(p.jobQueue)
+		close(p.done)
 	}()
 
 	return nil
@@ -72,6 +75,8 @@ func (p *TransactionProcessor) Submit(tx *models.Transaction) error {
 	select {
 	case p.jobQueue <- tx:
 		return nil
+	case <-p.done:
+		return fmt.Errorf("transaction processor is shutting down")
 	default:
 		return fmt.Errorf("transaction queue is full")
 	}

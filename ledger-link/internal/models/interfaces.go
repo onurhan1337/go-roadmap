@@ -44,6 +44,8 @@ type TransactionService interface {
 	ProcessTransaction(ctx context.Context, tx *Transaction) error
 	GetUserTransactions(ctx context.Context, userID uint) ([]Transaction, error)
 	SubmitTransaction(ctx context.Context, tx *Transaction) error
+	Start(ctx context.Context) error
+	Stop()
 }
 
 type BalanceService interface {
