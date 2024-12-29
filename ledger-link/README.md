@@ -46,22 +46,26 @@ ledger-link/
 ## Quick Start
 
 1. Clone the repository:
+
 ```bash
 git clone <repository-url>
 cd ledger-link
 ```
 
 2. Copy the example environment file:
+
 ```bash
 cp .env.example .env
 ```
 
 3. Start the MySQL database using Docker:
+
 ```bash
 docker-compose up -d
 ```
 
 4. Run the application:
+
 ```bash
 go run main.go
 ```
@@ -71,6 +75,7 @@ go run main.go
 The application uses MySQL as its database. You can run it in two ways:
 
 ### Using Docker (Recommended)
+
 ```bash
 # Start MySQL container
 docker-compose up -d
@@ -80,6 +85,7 @@ docker-compose ps
 ```
 
 ### Local MySQL
+
 ```bash
 # Create database
 mysql -u root -p
@@ -99,6 +105,7 @@ DB_NAME=ledger_link
 ## Database Schema
 
 ### Users
+
 - ID (Primary Key)
 - Username (Unique)
 - Email (Unique)
@@ -107,6 +114,7 @@ DB_NAME=ledger_link
 - Created/Updated At
 
 ### Transactions
+
 - ID (Primary Key)
 - From User ID (Foreign Key)
 - To User ID (Foreign Key)
@@ -116,11 +124,13 @@ DB_NAME=ledger_link
 - Created At
 
 ### Balances
+
 - User ID (Primary Key)
 - Amount
 - Last Updated At
 
 ### Audit Logs
+
 - ID (Primary Key)
 - Entity Type
 - Entity ID
@@ -131,12 +141,94 @@ DB_NAME=ledger_link
 ## Development
 
 ### Running Tests
+
 ```bash
 go test ./...
 ```
 
 ### Database Migrations
+
 Migrations are automatically handled by GORM auto-migrate feature when the application starts.
+
+### Batch Processing System
+
+The project includes a concurrent batch processing system for handling multiple tasks efficiently. Here's how to use it:
+
+```go
+// Create a new batch processor
+processor := batch.NewBatchProcessor(batch.Config{
+    WorkerCount: 5,    // Number of concurrent workers
+    QueueSize:   100,  // Size of the task queue
+    Logger:      logger,
+})
+
+// Start the processor
+ctx, cancel := context.WithCancel(context.Background())
+defer cancel()
+processor.Start(ctx)
+
+// Submit tasks
+task := NewCustomTask()
+err := processor.Submit(task)
+if err != nil {
+    log.Printf("Failed to submit task: %v", err)
+}
+
+// Get processing statistics
+stats := processor.GetStats()
+
+// Graceful shutdown
+processor.Stop()
+```
+
+#### Implementing Custom Tasks
+
+To create a custom task, implement the `Task` interface:
+
+```go
+// Task interface
+type Task interface {
+    Process(ctx context.Context) error
+    ID() string
+}
+
+// Example implementation
+type CustomTask struct {
+    id       string
+    data     interface{}
+    duration time.Duration
+}
+
+func NewCustomTask(id string, data interface{}, duration time.Duration) *CustomTask {
+    return &CustomTask{
+        id:       id,
+        data:     data,
+        duration: duration,
+    }
+}
+
+func (t *CustomTask) Process(ctx context.Context) error {
+    select {
+    case <-time.After(t.duration):
+        // Your task processing logic here
+        return nil
+    case <-ctx.Done():
+        return fmt.Errorf("task cancelled: %w", ctx.Err())
+    }
+}
+
+func (t *CustomTask) ID() string {
+    return t.id
+}
+```
+
+Key features of the batch processor:
+
+- Concurrent processing with configurable worker pool
+- Built-in statistics tracking
+- Graceful shutdown support
+- Context-aware task processing
+- Generic interface for custom task implementations
 
 ## Docker Support
 
@@ -163,4 +255,4 @@ docker-compose logs -f
 
 ## License
 
-This project is licensed under the MIT License - see the LICENSE file for details. 
+This project is licensed under the MIT License - see the LICENSE file for details.
