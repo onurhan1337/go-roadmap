@@ -43,6 +43,7 @@ type TransactionService interface {
 	CreateTransaction(ctx context.Context, tx *Transaction) error
 	ProcessTransaction(ctx context.Context, tx *Transaction) error
 	GetUserTransactions(ctx context.Context, userID uint) ([]Transaction, error)
+	SubmitTransaction(ctx context.Context, tx *Transaction) error
 }
 
 type BalanceService interface {
@@ -54,4 +55,10 @@ type BalanceService interface {
 type AuditService interface {
 	LogAction(ctx context.Context, entityType string, entityID uint, action string, details string) error
 	GetEntityAuditLog(ctx context.Context, entityType string, entityID uint) ([]AuditLog, error)
+}
+
+type TransactionProcessor interface {
+	Start(ctx context.Context) error
+	Stop()
+	Submit(tx *Transaction) error
 }
