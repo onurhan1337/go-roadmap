@@ -24,6 +24,7 @@ var (
 	ErrInvalidStatus   = errors.New("invalid transaction status")
 	ErrInvalidType     = errors.New("invalid transaction type")
 	ErrInvalidRole     = errors.New("invalid user role")
+	ErrEmailAlreadyExists = errors.New("email already exists")
 )
 
 const (
@@ -50,7 +51,7 @@ const (
 )
 
 type User struct {
-	ID           uint           `gorm:"primaryKey" json:"id"`
+	ID           uint           `gorm:"primaryKey;autoIncrement" json:"id"`
 	Username     string         `gorm:"type:varchar(30);uniqueIndex;not null" json:"username"`
 	Email        string         `gorm:"type:varchar(255);uniqueIndex;not null" json:"email"`
 	PasswordHash string         `gorm:"not null" json:"-"`
@@ -428,7 +429,7 @@ type AuditLog struct {
 	Action     string         `gorm:"not null" json:"action"`
 	Details    string         `gorm:"type:text" json:"details"`
 	UserID     uint          `gorm:"index;not null" json:"user_id"`
-	User       User          `gorm:"foreignKey:UserID" json:"user"`
+	User       User           `gorm:"foreignKey:UserID" json:"user"`
 	CreatedAt  time.Time      `gorm:"not null" json:"created_at"`
 	UpdatedAt  time.Time      `gorm:"not null" json:"updated_at"`
 	DeletedAt  gorm.DeletedAt `gorm:"index" json:"-"`

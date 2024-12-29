@@ -10,6 +10,7 @@ type UserRepository interface {
 	GetByID(ctx context.Context, id uint) (*User, error)
 	GetByEmail(ctx context.Context, email string) (*User, error)
 	GetByUsername(ctx context.Context, username string) (*User, error)
+	GetUsers(ctx context.Context) ([]*User, error)
 	Update(ctx context.Context, user *User) error
 	Delete(ctx context.Context, id uint) error
 }
@@ -35,10 +36,15 @@ type AuditLogRepository interface {
 }
 
 type UserService interface {
-	Register(ctx context.Context, user *User) error
+	Register(ctx context.Context, user *User) (*User, error)
 	Authenticate(ctx context.Context, email, password string) (*User, error)
 	UpdateProfile(ctx context.Context, user *User) error
 	ChangePassword(ctx context.Context, userID uint, oldPassword, newPassword string) error
+	GetByID(ctx context.Context, id uint) (*User, error)
+	GetUsers(ctx context.Context) ([]*User, error)
+	Delete(ctx context.Context, id uint) error
+	IsAdmin(user *User) bool
+	CanAccessUser(requestingUser *User, targetUserID uint) bool
 }
 
 type TransactionService interface {

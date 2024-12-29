@@ -25,8 +25,8 @@ func NewConfig() *DBConfig {
 	return &DBConfig{
 		Host:     getEnvOrDefault("DB_HOST", "localhost"),
 		Port:     getEnvOrDefault("DB_PORT", "3306"),
-		User:     getEnvOrDefault("DB_USER", "root"),
-		Password: getEnvOrDefault("DB_PASSWORD", ""),
+		User:     getEnvOrDefault("DB_USER", "ledger_user"),
+		Password: getEnvOrDefault("DB_PASSWORD", "ledger_pass"),
 		DBName:   getEnvOrDefault("DB_NAME", "ledger_link"),
 	}
 }
@@ -47,11 +47,25 @@ func Connect(config *DBConfig) (*gorm.DB, error) {
 		},
 	)
 
-	db, err := gorm.Open(mysql.Open(config.DSN()), &gorm.Config{
-		Logger: newLogger,
-	})
+	var db *gorm.DB
+	var err error
+	maxRetries := 5
+	retryDelay := time.Second * 3
+
+	for i := 0; i < maxRetries; i++ {
+		db, err = gorm.Open(mysql.Open(config.DSN()), &gorm.Config{
+			Logger: newLogger,
+		})
+		if err == nil {
+			break
+		}
+		log.Printf("Failed to connect to database (attempt %d/%d): %v", i+1, maxRetries, err)
+		if i < maxRetries-1 {
+			time.Sleep(retryDelay)
+		}
+	}
 	if err != nil {
-		return nil, fmt.Errorf("failed to connect to database: %w", err)
+		return nil, fmt.Errorf("failed to connect to database after %d attempts: %w", maxRetries, err)
 	}
 
 	sqlDB, err := db.DB()

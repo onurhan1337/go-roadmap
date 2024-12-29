@@ -27,12 +27,8 @@ func (r *AuditRepository) Create(ctx context.Context, log *models.AuditLog) erro
 
 func (r *AuditRepository) GetByEntityID(ctx context.Context, entityType string, entityID uint) ([]models.AuditLog, error) {
 	var logs []models.AuditLog
-	result := r.db.WithContext(ctx).
-		Where("entity_type = ? AND entity_id = ?", entityType, entityID).
-		Order("created_at DESC").
-		Find(&logs)
-	if result.Error != nil {
-		return nil, fmt.Errorf("failed to get audit logs: %w", result.Error)
+	if err := r.db.WithContext(ctx).Where("entity_type = ? AND entity_id = ?", entityType, entityID).Find(&logs).Error; err != nil {
+		return nil, fmt.Errorf("failed to get audit logs: %w", err)
 	}
 	return logs, nil
 }

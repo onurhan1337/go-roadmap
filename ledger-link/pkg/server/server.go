@@ -33,6 +33,13 @@ func New(cfg *config.Config, container *config.ServiceContainer, logger *logger.
 	router.POST("/api/v1/auth/login", authHandler.Login)
 	router.POST("/api/v1/auth/refresh", authHandler.RefreshToken)
 
+	// User routes
+	userHandler := handlers.NewUserHandler(container.UserService, logger)
+	router.GET("/api/v1/users", userHandler.GetUsers)
+	router.GET("/api/v1/users/{id}", userHandler.GetUser)
+	router.PUT("/api/v1/users/{id}", userHandler.UpdateUser)
+	router.DELETE("/api/v1/users/{id}", userHandler.DeleteUser)
+
 	s.server = &http.Server{
 		Addr:         ":" + cfg.HTTPPort,
 		Handler:      router.Handler(),

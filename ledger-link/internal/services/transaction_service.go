@@ -23,32 +23,13 @@ func NewTransactionService(
 	auditSvc models.AuditService,
 	logger *logger.Logger,
 ) *TransactionService {
-	svc := &TransactionService{
+	return &TransactionService{
 		repo:       repo,
 		balanceSvc: balanceSvc,
 		auditSvc:   auditSvc,
 		logger:     logger,
+		processor:  processor.NewTransactionProcessor(repo, balanceSvc, auditSvc, logger),
 	}
-
-	procConfig := processor.ProcessorConfig{
-		WorkerCount:    5,
-		QueueSize:      100,
-		TransactionSvc: svc,
-		BalanceSvc:     balanceSvc,
-		AuditSvc:       auditSvc,
-		Logger:         logger,
-	}
-
-	svc.processor = processor.NewTransactionProcessor(procConfig)
-	return svc
-}
-
-func (s *TransactionService) Start(ctx context.Context) error {
-	return s.processor.Start(ctx)
-}
-
-func (s *TransactionService) Stop() {
-	s.processor.Stop()
 }
 
 func (s *TransactionService) Credit(ctx context.Context, userID uint, amount float64, notes string) error {
@@ -58,11 +39,11 @@ func (s *TransactionService) Credit(ctx context.Context, userID uint, amount flo
 
 	tx := &models.Transaction{
 		ToUserID:   userID,
-		FromUserID: userID,
-		Amount:     amount,
-		Type:       models.TypeDeposit,
-		Status:     models.StatusPending,
-		Notes:      notes,
+			FromUserID: userID,
+			Amount:     amount,
+			Type:       models.TypeDeposit,
+			Status:     models.StatusPending,
+			Notes:      notes,
 	}
 
 	if err := tx.Validate(); err != nil {
@@ -221,17 +202,13 @@ func (s *TransactionService) SubmitTransaction(ctx context.Context, tx *models.T
 		return err
 	}
 
-	if err := s.processor.Submit(tx); err != nil {
+	if err := s.processor.ProcessTransaction(ctx, tx); err != nil {
 		tx.Status = models.StatusFailed
 		if updateErr := s.ProcessTransaction(ctx, tx); updateErr != nil {
 			s.logger.Error("failed to update failed transaction", "error", updateErr)
 		}
-		return fmt.Errorf("failed to submit transaction: %w", err)
+		return fmt.Errorf("failed to process transaction: %w", err)
 	}
 
 	return nil
-}
-
-func (s *TransactionService) GetStatistics() map[string]interface{} {
-	return s.processor.GetStatistics()
 }

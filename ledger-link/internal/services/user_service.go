@@ -2,123 +2,96 @@ package services
 
 import (
 	"context"
-	"errors"
 	"fmt"
+	"time"
+
+	"golang.org/x/crypto/bcrypt"
 
 	"ledger-link/internal/models"
 	"ledger-link/pkg/logger"
-
-	"golang.org/x/crypto/bcrypt"
-)
-
-var (
-	ErrUserNotFound      = errors.New("user not found")
-	ErrInvalidCredentials = errors.New("invalid credentials")
-	ErrEmailExists       = errors.New("email already exists")
-	ErrUsernameExists    = errors.New("username already exists")
-	ErrUnauthorized      = errors.New("unauthorized")
 )
 
 type UserService struct {
-	repo      models.UserRepository
-	balanceSvc models.BalanceService
-	auditSvc   models.AuditService
-	logger     *logger.Logger
+	repo          models.UserRepository
+	balanceService models.BalanceService
+	auditSvc      models.AuditService
+	logger        *logger.Logger
 }
 
 func NewUserService(
 	repo models.UserRepository,
-	balanceSvc models.BalanceService,
+	balanceService models.BalanceService,
 	auditSvc models.AuditService,
 	logger *logger.Logger,
 ) *UserService {
 	return &UserService{
-		repo:      repo,
-		balanceSvc: balanceSvc,
-		auditSvc:   auditSvc,
-		logger:     logger,
+		repo:          repo,
+		balanceService: balanceService,
+		auditSvc:      auditSvc,
+		logger:        logger,
 	}
 }
 
-func (s *UserService) Register(ctx context.Context, user *models.User) error {
-	if existing, _ := s.repo.GetByEmail(ctx, user.Email); existing != nil {
-		return ErrEmailExists
-	}
+func (s *UserService) Create(ctx context.Context, user *models.User) error {
+	user.CreatedAt = time.Now()
+	user.UpdatedAt = time.Now()
 
-	if existing, _ := s.repo.GetByUsername(ctx, user.Username); existing != nil {
-		return ErrUsernameExists
-	}
-
-	if user.Role == "" {
-		user.Role = models.RoleUser
-	}
-
+	// Create the user first
 	if err := s.repo.Create(ctx, user); err != nil {
 		return fmt.Errorf("failed to create user: %w", err)
 	}
 
-	if err := s.balanceSvc.UpdateBalance(ctx, user.ID, 0); err != nil {
-		s.logger.Error("failed to initialize user balance", "error", err, "user_id", user.ID)
+	// Create audit log after user is created
+	details := fmt.Sprintf("User created with email: %s", user.Email)
+	if err := s.auditSvc.LogAction(ctx, models.EntityTypeUser, user.ID, models.ActionCreate, details); err != nil {
+		s.logger.Error("failed to log user creation", "error", err)
 	}
 
-	details := fmt.Sprintf("User registered: %s (%s)", user.Username, user.Email)
-	if err := s.auditSvc.LogAction(ctx, models.EntityTypeUser, user.ID, models.ActionCreate, details); err != nil {
-		s.logger.Error("failed to log user registration", "error", err)
+	// Initialize user's balance
+	if err := s.balanceService.UpdateBalance(ctx, user.ID, 0); err != nil {
+		s.logger.Error("failed to initialize user balance", "error", err)
 	}
 
 	return nil
+}
+
+func (s *UserService) GetByEmail(ctx context.Context, email string) (*models.User, error) {
+	user, err := s.repo.GetByEmail(ctx, email)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get user by email: %w", err)
+	}
+	return user, nil
 }
 
 func (s *UserService) Authenticate(ctx context.Context, email, password string) (*models.User, error) {
-	user, err := s.repo.GetByEmail(ctx, email)
+	user, err := s.GetByEmail(ctx, email)
 	if err != nil {
-		if errors.Is(err, models.ErrNotFound) {
-			return nil, ErrInvalidCredentials
+		if err == models.ErrNotFound {
+			return nil, models.ErrInvalidCredentials
 		}
-		return nil, fmt.Errorf("failed to get user: %w", err)
+		return nil, err
 	}
 
 	if err := bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(password)); err != nil {
-		return nil, ErrInvalidCredentials
+		return nil, models.ErrInvalidCredentials
 	}
 
-	details := fmt.Sprintf("User authenticated: %s", user.Email)
-	if err := s.auditSvc.LogAction(ctx, models.EntityTypeUser, user.ID, "login", details); err != nil {
+	details := fmt.Sprintf("User authenticated with email: %s", email)
+	if err := s.auditSvc.LogAction(ctx, models.EntityTypeUser, user.ID, models.ActionUpdate, details); err != nil {
 		s.logger.Error("failed to log user authentication", "error", err)
 	}
 
-	return user.SafeCopy(), nil
-}
-
-func (s *UserService) UpdateProfile(ctx context.Context, user *models.User) error {
-	existing, err := s.repo.GetByID(ctx, user.ID)
-	if err != nil {
-		return fmt.Errorf("failed to get user: %w", err)
-	}
-
-	existing.Username = user.Username
-	existing.Email = user.Email
-
-	if err := s.repo.Update(ctx, existing); err != nil {
-		return fmt.Errorf("failed to update user: %w", err)
-	}
-
-	details := fmt.Sprintf("User profile updated: %s", user.Username)
-	if err := s.auditSvc.LogAction(ctx, models.EntityTypeUser, user.ID, models.ActionUpdate, details); err != nil {
-		s.logger.Error("failed to log profile update", "error", err)
-	}
-
-	return nil
+	return user, nil
 }
 
 func (s *UserService) ChangePassword(ctx context.Context, userID uint, oldPassword, newPassword string) error {
-	user, err := s.repo.GetByID(ctx, userID)
+	user, err := s.GetByID(ctx, userID)
 	if err != nil {
-		return fmt.Errorf("failed to get user: %w", err)
+		return err
 	}
 
 	if err := bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(oldPassword)); err != nil {
-		return ErrInvalidCredentials
+		return models.ErrInvalidCredentials
 	}
 
 	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(newPassword), bcrypt.DefaultCost)
@@ -127,8 +100,10 @@ func (s *UserService) ChangePassword(ctx context.Context, userID uint, oldPasswo
 	}
 
 	user.PasswordHash = string(hashedPassword)
+	user.UpdatedAt = time.Now()
+
 	if err := s.repo.Update(ctx, user); err != nil {
-		return fmt.Errorf("failed to update password: %w", err)
+		return fmt.Errorf("failed to update user password: %w", err)
 	}
 
 	details := "Password changed"
@@ -139,14 +114,68 @@ func (s *UserService) ChangePassword(ctx context.Context, userID uint, oldPasswo
 	return nil
 }
 
+func (s *UserService) CanAccessUser(requestingUser *models.User, targetUserID uint) bool {
+	return requestingUser.Role == models.RoleAdmin || requestingUser.ID == targetUserID
+}
+
+func (s *UserService) GetByID(ctx context.Context, id uint) (*models.User, error) {
+	user, err := s.repo.GetByID(ctx, id)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get user: %w", err)
+	}
+	return user, nil
+}
+
+func (s *UserService) Update(ctx context.Context, user *models.User) error {
+	user.UpdatedAt = time.Now()
+
+	if err := s.repo.Update(ctx, user); err != nil {
+		return fmt.Errorf("failed to update user: %w", err)
+	}
+
+	details := fmt.Sprintf("User updated with email: %s", user.Email)
+	if err := s.auditSvc.LogAction(ctx, models.EntityTypeUser, user.ID, models.ActionUpdate, details); err != nil {
+		s.logger.Error("failed to log user update", "error", err)
+	}
+
+	return nil
+}
+
+func (s *UserService) Delete(ctx context.Context, id uint) error {
+	if err := s.repo.Delete(ctx, id); err != nil {
+		return fmt.Errorf("failed to delete user: %w", err)
+	}
+
+	details := "User deleted"
+	if err := s.auditSvc.LogAction(ctx, models.EntityTypeUser, id, models.ActionDelete, details); err != nil {
+		s.logger.Error("failed to log user deletion", "error", err)
+	}
+
+	return nil
+}
+
+func (s *UserService) GetUsers(ctx context.Context) ([]*models.User, error) {
+	return s.repo.GetUsers(ctx)
+}
+
 func (s *UserService) IsAdmin(user *models.User) bool {
 	return user != nil && user.Role == models.RoleAdmin
 }
 
-func (s *UserService) CanAccessUser(requestingUser *models.User, targetUserID uint) bool {
-	return requestingUser != nil && (requestingUser.ID == targetUserID || s.IsAdmin(requestingUser))
+func (s *UserService) Register(ctx context.Context, user *models.User) (*models.User, error) {
+	// Set default role if not specified
+	if user.Role == "" {
+		user.Role = models.RoleUser
+	}
+
+	if err := s.Create(ctx, user); err != nil {
+		return nil, err
+	}
+
+	// Fetch the complete user object with all relations
+	return s.GetByID(ctx, user.ID)
 }
 
-func (s *UserService) GetByID(ctx context.Context, id uint) (*models.User, error) {
-	return s.repo.GetByID(ctx, id)
+func (s *UserService) UpdateProfile(ctx context.Context, user *models.User) error {
+	return s.Update(ctx, user)
 }
