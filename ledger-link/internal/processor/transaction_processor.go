@@ -18,7 +18,8 @@ type TransactionProcessor struct {
 	logger         *logger.Logger
 	wg             sync.WaitGroup
 	done           chan struct{}
-	balanceLocks   sync.Map // Thread-safe map for balance locks
+	balanceLocks   sync.Map
+	stats          *models.TransactionStats
 }
 
 type ProcessorConfig struct {
@@ -46,6 +47,7 @@ func NewTransactionProcessor(cfg ProcessorConfig) *TransactionProcessor {
 		auditSvc:       cfg.AuditSvc,
 		logger:         cfg.Logger,
 		done:           make(chan struct{}),
+		stats:          models.NewTransactionStats(),
 	}
 }
 
@@ -115,7 +117,8 @@ func (p *TransactionProcessor) getBalanceLock(userID uint) *sync.Mutex {
 }
 
 func (p *TransactionProcessor) processTransaction(ctx context.Context, tx *models.Transaction) error {
-	// Get locks for both accounts to prevent deadlocks
+	p.stats.IncrementTotal()
+
 	var firstLock, secondLock *sync.Mutex
 	if tx.FromUserID < tx.ToUserID {
 		firstLock = p.getBalanceLock(tx.FromUserID)
@@ -125,54 +128,57 @@ func (p *TransactionProcessor) processTransaction(ctx context.Context, tx *model
 		secondLock = p.getBalanceLock(tx.FromUserID)
 	}
 
-	// Lock both accounts in order
 	firstLock.Lock()
 	secondLock.Lock()
 	defer firstLock.Unlock()
 	defer secondLock.Unlock()
 
-	// Get balances
 	fromBalance, err := p.balanceSvc.GetBalance(ctx, tx.FromUserID)
 	if err != nil {
+		p.stats.IncrementFailed()
 		return fmt.Errorf("failed to get from user balance: %w", err)
 	}
 
 	if fromBalance.SafeAmount() < tx.Amount {
-		tx.Status = models.StatusFailed
-		if err := p.transactionSvc.ProcessTransaction(ctx, tx); err != nil {
-			return fmt.Errorf("failed to update failed transaction: %w", err)
-		}
-		return fmt.Errorf("insufficient funds")
+			tx.Status = models.StatusFailed
+			p.stats.IncrementFailed()
+			if err := p.transactionSvc.ProcessTransaction(ctx, tx); err != nil {
+				return fmt.Errorf("failed to update failed transaction: %w", err)
+			}
+			return fmt.Errorf("insufficient funds")
 	}
 
-	// Perform the transfer atomically
 	if err := fromBalance.SubtractAmount(tx.Amount); err != nil {
+		p.stats.IncrementFailed()
 		return fmt.Errorf("failed to update from user balance: %w", err)
 	}
 
 	toBalance, err := p.balanceSvc.GetBalance(ctx, tx.ToUserID)
 	if err != nil {
-		// Rollback the subtraction
 		if rbErr := fromBalance.AddAmount(tx.Amount); rbErr != nil {
 			p.logger.Error("failed to rollback balance update", "error", rbErr)
 		}
+		p.stats.IncrementFailed()
 		return fmt.Errorf("failed to get to user balance: %w", err)
 	}
 
 	if err := toBalance.AddAmount(tx.Amount); err != nil {
-		// Rollback the subtraction
 		if rbErr := fromBalance.AddAmount(tx.Amount); rbErr != nil {
 			p.logger.Error("failed to rollback balance update", "error", rbErr)
 		}
+		p.stats.IncrementFailed()
 		return fmt.Errorf("failed to update to user balance: %w", err)
 	}
 
 	tx.Status = models.StatusCompleted
 	if err := p.transactionSvc.ProcessTransaction(ctx, tx); err != nil {
+		p.stats.IncrementFailed()
 		return fmt.Errorf("failed to update completed transaction: %w", err)
 	}
 
-	// Log the successful transaction
+	p.stats.IncrementSuccessful()
+	p.stats.AddAmount(tx.Amount)
+
 	details := fmt.Sprintf("Transaction %d completed: %f transferred from user %d to user %d",
 		tx.ID, tx.Amount, tx.FromUserID, tx.ToUserID)
 	if err := p.auditSvc.LogAction(ctx, models.EntityTypeTransaction, tx.ID, models.ActionUpdate, details); err != nil {
@@ -180,4 +186,8 @@ func (p *TransactionProcessor) processTransaction(ctx context.Context, tx *model
 	}
 
 	return nil
+}
+
+func (p *TransactionProcessor) GetStatistics() map[string]interface{} {
+	return p.stats.GetStats()
 }

@@ -80,3 +80,7 @@ func (s *TransactionService) SubmitTransaction(ctx context.Context, tx *models.T
 
 	return nil
 }
+
+func (s *TransactionService) GetStatistics() map[string]interface{} {
+	return s.processor.GetStatistics()
+}
