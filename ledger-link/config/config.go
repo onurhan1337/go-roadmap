@@ -15,6 +15,7 @@ type Config struct {
 	HTTPReadTimeout  time.Duration
 	HTTPWriteTimeout time.Duration
 	HTTPIdleTimeout  time.Duration
+	JWTSecret       string
 }
 
 func Load() (*Config, error) {
@@ -28,6 +29,7 @@ func Load() (*Config, error) {
 		HTTPReadTimeout:  getDuration("HTTP_READ_TIMEOUT", 5*time.Second),
 		HTTPWriteTimeout: getDuration("HTTP_WRITE_TIMEOUT", 10*time.Second),
 		HTTPIdleTimeout:  getDuration("HTTP_IDLE_TIMEOUT", 120*time.Second),
+		JWTSecret:       getEnv("JWT_SECRET", "default-secret-key"),
 	}
 
 	return cfg, nil

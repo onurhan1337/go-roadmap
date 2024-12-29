@@ -49,12 +49,6 @@ func (s *UserService) Register(ctx context.Context, user *models.User) error {
 		return ErrUsernameExists
 	}
 
-	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(user.PasswordHash), bcrypt.DefaultCost)
-	if err != nil {
-		return fmt.Errorf("failed to hash password: %w", err)
-	}
-	user.PasswordHash = string(hashedPassword)
-
 	if user.Role == "" {
 		user.Role = models.RoleUser
 	}
@@ -151,4 +145,8 @@ func (s *UserService) IsAdmin(user *models.User) bool {
 
 func (s *UserService) CanAccessUser(requestingUser *models.User, targetUserID uint) bool {
 	return requestingUser != nil && (requestingUser.ID == targetUserID || s.IsAdmin(requestingUser))
+}
+
+func (s *UserService) GetByID(ctx context.Context, id uint) (*models.User, error) {
+	return s.repo.GetByID(ctx, id)
 }

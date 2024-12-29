@@ -12,6 +12,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"golang.org/x/crypto/bcrypt"
 	"gorm.io/gorm"
 )
 
@@ -50,8 +51,8 @@ const (
 
 type User struct {
 	ID           uint           `gorm:"primaryKey" json:"id"`
-	Username     string         `gorm:"uniqueIndex;not null" json:"username"`
-	Email        string         `gorm:"uniqueIndex;not null" json:"email"`
+	Username     string         `gorm:"type:varchar(30);uniqueIndex;not null" json:"username"`
+	Email        string         `gorm:"type:varchar(255);uniqueIndex;not null" json:"email"`
 	PasswordHash string         `gorm:"not null" json:"-"`
 	Role         string         `gorm:"not null;default:'user'" json:"role"`
 	Balance      Balance        `gorm:"foreignKey:UserID" json:"balance"`
@@ -147,6 +148,15 @@ func (u *User) MarshalJSON() ([]byte, error) {
 	}{
 		Alias: (*Alias)(u),
 	})
+}
+
+func (u *User) SetPassword(password string) error {
+	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+	if err != nil {
+		return err
+	}
+	u.PasswordHash = string(hashedPassword)
+	return nil
 }
 
 type TransactionStatus string

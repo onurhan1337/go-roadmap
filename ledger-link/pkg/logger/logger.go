@@ -6,7 +6,7 @@ import (
 )
 
 type Logger struct {
-	log *slog.Logger
+	*slog.Logger
 }
 
 func New(level string) *Logger {
@@ -24,39 +24,38 @@ func New(level string) *Logger {
 		logLevel = slog.LevelInfo
 	}
 
-	opts := &slog.HandlerOptions{
-		Level: logLevel,
-	}
-
+	opts := &slog.HandlerOptions{Level: logLevel}
 	handler := slog.NewTextHandler(os.Stdout, opts)
-	return &Logger{
-		log: slog.New(handler),
-	}
+	logger := slog.New(handler)
+
+	return &Logger{logger}
+}
+
+func (l *Logger) Fatal(msg string, args ...interface{}) {
+	l.Logger.Error(msg, args...)
+	os.Exit(1)
 }
 
 func (l *Logger) Debug(msg string, attrs ...any) {
-	l.log.Debug(msg, attrs...)
+	l.Logger.Debug(msg, attrs...)
 }
 
 func (l *Logger) Info(msg string, attrs ...any) {
-	l.log.Info(msg, attrs...)
+	l.Logger.Info(msg, attrs...)
 }
 
 func (l *Logger) Warn(msg string, attrs ...any) {
-	l.log.Warn(msg, attrs...)
+	l.Logger.Warn(msg, attrs...)
 }
 
 func (l *Logger) Error(msg string, attrs ...any) {
-	l.log.Error(msg, attrs...)
+	l.Logger.Error(msg, attrs...)
 }
 
 func (l *Logger) WithAttrs(attrs ...slog.Attr) *Logger {
-	args := make([]any, len(attrs)*2)
+	args := make([]any, len(attrs))
 	for i, attr := range attrs {
-		args[i*2] = attr.Key
-		args[i*2+1] = attr.Value
+		args[i] = attr
 	}
-	return &Logger{
-		log: l.log.With(args...),
-	}
+	return &Logger{l.With(args...)}
 }

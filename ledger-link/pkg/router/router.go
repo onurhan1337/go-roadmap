@@ -13,10 +13,10 @@ type Router struct {
 	logger *logger.Logger
 }
 
-func NewRouter(logger *logger.Logger) *Router {
+func New() *Router {
 	return &Router{
 		mux:    http.NewServeMux(),
-		logger: logger,
+		logger: logger.New("info"),
 	}
 }
 
@@ -31,10 +31,28 @@ func (r *Router) Handler() http.Handler {
 	return handler
 }
 
-func (r *Router) Handle(pattern string, handler http.Handler) {
-	r.mux.Handle(pattern, handler)
+func (r *Router) GET(path string, handler http.HandlerFunc) {
+	r.HandleMethod("GET", path, handler)
 }
 
-func (r *Router) HandleFunc(pattern string, handler func(http.ResponseWriter, *http.Request)) {
-	r.mux.HandleFunc(pattern, handler)
+func (r *Router) POST(path string, handler http.HandlerFunc) {
+	r.HandleMethod("POST", path, handler)
+}
+
+func (r *Router) PUT(path string, handler http.HandlerFunc) {
+	r.HandleMethod("PUT", path, handler)
+}
+
+func (r *Router) DELETE(path string, handler http.HandlerFunc) {
+	r.HandleMethod("DELETE", path, handler)
+}
+
+func (r *Router) HandleMethod(method, path string, handler http.HandlerFunc) {
+	r.mux.HandleFunc(path, func(w http.ResponseWriter, req *http.Request) {
+		if req.Method != method {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		handler(w, req)
+	})
 }

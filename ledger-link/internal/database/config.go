@@ -86,6 +86,7 @@ func InitDB() (*gorm.DB, error) {
 		&models.Transaction{},
 		&models.Balance{},
 		&models.AuditLog{},
+		&models.BalanceHistory{},
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to migrate database: %w", err)
