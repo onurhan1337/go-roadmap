@@ -9,6 +9,7 @@ import (
 	"syscall"
 
 	"golang.org/x/sync/errgroup"
+	"gorm.io/gorm"
 
 	"ledger-link/config"
 	"ledger-link/internal/database"
@@ -18,20 +19,30 @@ import (
 )
 
 type App struct {
-	log *logger.Logger
-	cfg *config.Config
+	log       *logger.Logger
+	cfg       *config.Config
+	db        *gorm.DB
+	services  *config.ServiceContainer
 }
 
-func NewApp(cfg *config.Config) *App {
+func NewApp(cfg *config.Config, db *gorm.DB) *App {
+	log := logger.New(cfg.LogLevel)
 	return &App{
-		log: logger.New(cfg.LogLevel),
-		cfg: cfg,
+		log:      log,
+		cfg:      cfg,
+		db:       db,
+		services: config.NewServiceContainer(db, log),
 	}
 }
 
 func (a *App) Run() error {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
+
+	if err := a.services.Start(ctx); err != nil {
+		return err
+	}
+	defer a.services.Stop()
 
 	g, ctx := errgroup.WithContext(ctx)
 
@@ -82,7 +93,8 @@ func main() {
 		os.Exit(1)
 	}
 
-	app := NewApp(cfg)
+	app := NewApp(cfg, db)
+	app.db = db
 	if err := app.Run(); err != nil {
 		os.Exit(1)
 	}
