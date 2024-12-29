@@ -25,6 +25,8 @@ type BalanceRepository interface {
 	Create(ctx context.Context, balance *Balance) error
 	GetByUserID(ctx context.Context, userID uint) (*Balance, error)
 	Update(ctx context.Context, balance *Balance) error
+	GetBalanceHistory(ctx context.Context, userID uint, limit int) ([]BalanceHistory, error)
+	CreateBalanceHistory(ctx context.Context, history *BalanceHistory) error
 }
 
 type AuditLogRepository interface {

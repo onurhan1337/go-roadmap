@@ -14,8 +14,15 @@ type ServiceContainer struct {
 	db  *gorm.DB
 	log *logger.Logger
 
-	UserRepo *repositories.UserRepository
-	UserService *services.UserService
+	UserRepo        *repositories.UserRepository
+	BalanceRepo     *repositories.BalanceRepository
+	TransactionRepo *repositories.TransactionRepository
+	AuditRepo       *repositories.AuditRepository
+
+	UserService        *services.UserService
+	BalanceService     *services.BalanceService
+	TransactionService *services.TransactionService
+	AuditService       *services.AuditService
 }
 
 func NewServiceContainer(db *gorm.DB, log *logger.Logger) *ServiceContainer {
@@ -30,10 +37,16 @@ func NewServiceContainer(db *gorm.DB, log *logger.Logger) *ServiceContainer {
 
 func (c *ServiceContainer) initRepositories() {
 	c.UserRepo = repositories.NewUserRepository(c.db)
+	c.BalanceRepo = repositories.NewBalanceRepository(c.db)
+	c.TransactionRepo = repositories.NewTransactionRepository(c.db)
+	c.AuditRepo = repositories.NewAuditRepository(c.db)
 }
 
 func (c *ServiceContainer) initServices() {
-	c.UserService = services.NewUserService(c.UserRepo, nil, nil, c.log)
+	c.AuditService = services.NewAuditService(c.AuditRepo, c.log)
+	c.BalanceService = services.NewBalanceService(c.BalanceRepo, c.AuditService, c.log)
+	c.UserService = services.NewUserService(c.UserRepo, c.BalanceService, c.AuditService, c.log)
+	c.TransactionService = services.NewTransactionService(c.TransactionRepo, c.BalanceService, c.AuditService, c.log)
 }
 
 func (c *ServiceContainer) Start(ctx context.Context) error {
