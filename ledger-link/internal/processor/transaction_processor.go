@@ -11,13 +11,14 @@ import (
 
 type TransactionProcessor struct {
 	workerCount    int
-	jobQueue      chan *models.Transaction
+	jobQueue       chan *models.Transaction
 	transactionSvc models.TransactionService
 	balanceSvc     models.BalanceService
 	auditSvc       models.AuditService
 	logger         *logger.Logger
 	wg             sync.WaitGroup
 	done           chan struct{}
+	balanceLocks   sync.Map // Thread-safe map for balance locks
 }
 
 type ProcessorConfig struct {
@@ -39,7 +40,7 @@ func NewTransactionProcessor(cfg ProcessorConfig) *TransactionProcessor {
 
 	return &TransactionProcessor{
 		workerCount:    cfg.WorkerCount,
-		jobQueue:      make(chan *models.Transaction, cfg.QueueSize),
+		jobQueue:       make(chan *models.Transaction, cfg.QueueSize),
 		transactionSvc: cfg.TransactionSvc,
 		balanceSvc:     cfg.BalanceSvc,
 		auditSvc:       cfg.AuditSvc,
@@ -108,19 +109,29 @@ func (p *TransactionProcessor) worker(ctx context.Context, id int) {
 	}
 }
 
+func (p *TransactionProcessor) getBalanceLock(userID uint) *sync.Mutex {
+	lock, _ := p.balanceLocks.LoadOrStore(userID, &sync.Mutex{})
+	return lock.(*sync.Mutex)
+}
+
 func (p *TransactionProcessor) processTransaction(ctx context.Context, tx *models.Transaction) error {
-	fromLock, err := p.balanceSvc.LockBalance(ctx, tx.FromUserID)
-	if err != nil {
-		return fmt.Errorf("failed to lock from user balance: %w", err)
+	// Get locks for both accounts to prevent deadlocks
+	var firstLock, secondLock *sync.Mutex
+	if tx.FromUserID < tx.ToUserID {
+		firstLock = p.getBalanceLock(tx.FromUserID)
+		secondLock = p.getBalanceLock(tx.ToUserID)
+	} else {
+		firstLock = p.getBalanceLock(tx.ToUserID)
+		secondLock = p.getBalanceLock(tx.FromUserID)
 	}
-	defer fromLock.Unlock()
 
-	toLock, err := p.balanceSvc.LockBalance(ctx, tx.ToUserID)
-	if err != nil {
-		return fmt.Errorf("failed to lock to user balance: %w", err)
-	}
-	defer toLock.Unlock()
+	// Lock both accounts in order
+	firstLock.Lock()
+	secondLock.Lock()
+	defer firstLock.Unlock()
+	defer secondLock.Unlock()
 
+	// Get balances
 	fromBalance, err := p.balanceSvc.GetBalance(ctx, tx.FromUserID)
 	if err != nil {
 		return fmt.Errorf("failed to get from user balance: %w", err)
@@ -134,12 +145,23 @@ func (p *TransactionProcessor) processTransaction(ctx context.Context, tx *model
 		return fmt.Errorf("insufficient funds")
 	}
 
-	if err := p.balanceSvc.UpdateBalance(ctx, tx.FromUserID, -tx.Amount); err != nil {
+	// Perform the transfer atomically
+	if err := fromBalance.SubtractAmount(tx.Amount); err != nil {
 		return fmt.Errorf("failed to update from user balance: %w", err)
 	}
 
-	if err := p.balanceSvc.UpdateBalance(ctx, tx.ToUserID, tx.Amount); err != nil {
-		if rbErr := p.balanceSvc.UpdateBalance(ctx, tx.FromUserID, tx.Amount); rbErr != nil {
+	toBalance, err := p.balanceSvc.GetBalance(ctx, tx.ToUserID)
+	if err != nil {
+		// Rollback the subtraction
+		if rbErr := fromBalance.AddAmount(tx.Amount); rbErr != nil {
+			p.logger.Error("failed to rollback balance update", "error", rbErr)
+		}
+		return fmt.Errorf("failed to get to user balance: %w", err)
+	}
+
+	if err := toBalance.AddAmount(tx.Amount); err != nil {
+		// Rollback the subtraction
+		if rbErr := fromBalance.AddAmount(tx.Amount); rbErr != nil {
 			p.logger.Error("failed to rollback balance update", "error", rbErr)
 		}
 		return fmt.Errorf("failed to update to user balance: %w", err)
@@ -150,6 +172,7 @@ func (p *TransactionProcessor) processTransaction(ctx context.Context, tx *model
 		return fmt.Errorf("failed to update completed transaction: %w", err)
 	}
 
+	// Log the successful transaction
 	details := fmt.Sprintf("Transaction %d completed: %f transferred from user %d to user %d",
 		tx.ID, tx.Amount, tx.FromUserID, tx.ToUserID)
 	if err := p.auditSvc.LogAction(ctx, models.EntityTypeTransaction, tx.ID, models.ActionUpdate, details); err != nil {

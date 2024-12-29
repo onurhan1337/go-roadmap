@@ -302,10 +302,15 @@ func (b *Balance) BeforeSave(tx *gorm.DB) error {
 }
 
 func (b *Balance) SafeAmount() float64 {
+	b.mu.RLock()
+	defer b.mu.RUnlock()
 	return float64(atomic.LoadInt64(&b.amount)) / 100
 }
 
 func (b *Balance) UpdateAmount(amount float64) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
 	atomic.StoreInt64(&b.amount, int64(amount*100))
 	b.Amount = amount
 	b.LastUpdatedAt = time.Now()
@@ -319,8 +324,12 @@ func (b *Balance) AddAmount(amount float64) error {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
-	newAmount := b.SafeAmount() + amount
-	b.UpdateAmount(newAmount)
+	currentAmount := float64(atomic.LoadInt64(&b.amount)) / 100
+	newAmount := currentAmount + amount
+	atomic.StoreInt64(&b.amount, int64(newAmount*100))
+	b.Amount = newAmount
+	b.LastUpdatedAt = time.Now()
+
 	return nil
 }
 
@@ -332,13 +341,16 @@ func (b *Balance) SubtractAmount(amount float64) error {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
-	currentAmount := b.SafeAmount()
+	currentAmount := float64(atomic.LoadInt64(&b.amount)) / 100
 	if currentAmount < amount {
 		return errors.New("insufficient balance")
 	}
 
 	newAmount := currentAmount - amount
-	b.UpdateAmount(newAmount)
+	atomic.StoreInt64(&b.amount, int64(newAmount*100))
+	b.Amount = newAmount
+	b.LastUpdatedAt = time.Now()
+
 	return nil
 }
 
