@@ -1,11 +1,14 @@
 package config
 
 import (
+	"fmt"
 	"ledger-link/internal/handlers"
 	"ledger-link/internal/repositories"
 	"ledger-link/internal/services"
 	"ledger-link/pkg/auth"
+	"ledger-link/pkg/cache"
 	"ledger-link/pkg/logger"
+	"ledger-link/pkg/redis"
 
 	"gorm.io/gorm"
 )
@@ -23,9 +26,26 @@ type ServiceContainer struct {
 	UserHandler        *handlers.UserHandler
 	TransactionHandler *handlers.TransactionHandler
 	BalanceHandler     *handlers.BalanceHandler
+
+	// Redis
+	CacheService *cache.CacheService
 }
 
-func NewServiceContainer(db *gorm.DB, logger *logger.Logger, cfg *Config) *ServiceContainer {
+func NewServiceContainer(db *gorm.DB, logger *logger.Logger, cfg *Config) (*ServiceContainer, error) {
+	// Initialize Redis client
+	redisClient, err := redis.NewRedisClient(&redis.Config{
+		Host:     cfg.Redis.Host,
+		Port:     cfg.Redis.Port,
+		Password: cfg.Redis.Password,
+		DB:       cfg.Redis.DB,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to initialize Redis: %w", err)
+	}
+
+	// Initialize cache service
+	cacheService := cache.NewCacheService(redisClient)
+
 	// Initialize repositories
 	userRepo := repositories.NewUserRepository(db)
 	transactionRepo := repositories.NewTransactionRepository(db)
@@ -61,5 +81,8 @@ func NewServiceContainer(db *gorm.DB, logger *logger.Logger, cfg *Config) *Servi
 		UserHandler:        userHandler,
 		TransactionHandler: transactionHandler,
 		BalanceHandler:     balanceHandler,
-	}
+
+		// Redis
+		CacheService: cacheService,
+	}, nil
 }

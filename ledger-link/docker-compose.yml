@@ -14,12 +14,26 @@ services:
       - DB_USER=ledger_user
       - DB_PASSWORD=ledger_pass
       - DB_NAME=ledger_link
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
       - HTTP_PORT=8080
       - JWT_SECRET=your-secret-key-here
+      - LOG_LEVEL=info
+      - REDIS_PASSWORD=${REDIS_PASSWORD:-redispass}
     depends_on:
       mysql:
         condition: service_healthy
+      redis:
+        condition: service_healthy
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    networks:
+      - ledger_network
 
   mysql:
     image: mysql:8.0
@@ -33,24 +47,48 @@ services:
       - "3306:3306"
     volumes:
       - mysql_data:/var/lib/mysql
-    command: --character-set-server=utf8mb4 --collation-server=utf8mb4_unicode_ci --default-authentication-plugin=mysql_native_password
+      - ./internal/database/migrations:/docker-entrypoint-initdb.d
+    command: 
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_unicode_ci
+      - --default-authentication-plugin=mysql_native_password
+      - --max-connections=1000
+      - --innodb-buffer-pool-size=1G
     healthcheck:
-      test:
-        [
-          "CMD",
-          "mysqladmin",
-          "ping",
-          "-h",
-          "localhost",
-          "-u",
-          "root",
-          "--password=rootpass",
-        ]
-      interval: 2s
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "--password=rootpass"]
+      interval: 10s
       timeout: 5s
-      retries: 10
+      retries: 5
       start_period: 10s
     restart: unless-stopped
+    networks:
+      - ledger_network
+
+  redis:
+    image: redis:7-alpine
+    container_name: ledger_link_redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+      - ./config/redis/redis.conf:/usr/local/etc/redis/redis.conf
+    command: redis-server /usr/local/etc/redis/redis.conf
+    environment:
+      - REDIS_PASSWORD=${REDIS_PASSWORD:-redispass}
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD:-redispass}", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    restart: unless-stopped
+    networks:
+      - ledger_network
 
 volumes:
   mysql_data:
+  redis_data:
+
+networks:
+  ledger_network:
+    driver: bridge
