@@ -2,37 +2,60 @@ package config
 
 import (
 	"os"
+	"strconv"
 	"time"
 
 	"github.com/joho/godotenv"
 )
 
 type Config struct {
-	Environment string
-	LogLevel    string
+	LogLevel string
+	Server   ServerConfig
+	Database DatabaseConfig
+	JWT      JWTConfig
+}
 
-	HTTPPort         string
-	HTTPReadTimeout  time.Duration
-	HTTPWriteTimeout time.Duration
-	HTTPIdleTimeout  time.Duration
-	JWTSecret       string
+type ServerConfig struct {
+	Port            string
+	Address         string
+	HTTPIdleTimeout time.Duration
+}
+
+type DatabaseConfig struct {
+	Host     string
+	Port     string
+	User     string
+	Password string
+	DBName   string
+}
+
+type JWTConfig struct {
+	SecretKey string
 }
 
 func Load() (*Config, error) {
-	_ = godotenv.Load()
-
-	cfg := &Config{
-		Environment: getEnv("ENVIRONMENT", "development"),
-		LogLevel:    getEnv("LOG_LEVEL", "info"),
-
-		HTTPPort:         getEnv("HTTP_PORT", "8080"),
-		HTTPReadTimeout:  getDuration("HTTP_READ_TIMEOUT", 5*time.Second),
-		HTTPWriteTimeout: getDuration("HTTP_WRITE_TIMEOUT", 10*time.Second),
-		HTTPIdleTimeout:  getDuration("HTTP_IDLE_TIMEOUT", 120*time.Second),
-		JWTSecret:       getEnv("JWT_SECRET", "default-secret-key"),
+	if err := godotenv.Load(); err != nil {
+		return nil, err
 	}
 
-	return cfg, nil
+	return &Config{
+		LogLevel: getEnv("LOG_LEVEL", "info"),
+		Server: ServerConfig{
+			Port:            getEnv("SERVER_PORT", "8080"),
+			Address:         getEnv("SERVER_ADDRESS", "0.0.0.0"),
+			HTTPIdleTimeout: time.Duration(getEnvAsInt("HTTP_IDLE_TIMEOUT", 60)) * time.Second,
+		},
+		Database: DatabaseConfig{
+			Host:     getEnv("DB_HOST", "localhost"),
+			Port:     getEnv("DB_PORT", "3306"),
+			User:     getEnv("DB_USER", "root"),
+			Password: getEnv("DB_PASSWORD", ""),
+			DBName:   getEnv("DB_NAME", "ledger_link"),
+		},
+		JWT: JWTConfig{
+			SecretKey: getEnv("JWT_SECRET_KEY", "your-256-bit-secret"),
+		},
+	}, nil
 }
 
 func getEnv(key, defaultValue string) string {
@@ -42,10 +65,10 @@ func getEnv(key, defaultValue string) string {
 	return defaultValue
 }
 
-func getDuration(key string, defaultValue time.Duration) time.Duration {
+func getEnvAsInt(key string, defaultValue int) int {
 	if value, exists := os.LookupEnv(key); exists {
-		if duration, err := time.ParseDuration(value); err == nil {
-			return duration
+		if intValue, err := strconv.Atoi(value); err == nil {
+			return intValue
 		}
 	}
 	return defaultValue

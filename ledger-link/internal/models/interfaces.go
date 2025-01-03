@@ -2,6 +2,7 @@ package models
 
 import (
 	"context"
+	"net/http"
 	"sync"
 	"time"
 )
@@ -85,4 +86,24 @@ type AuthService interface {
 	Register(ctx context.Context, email, password, username string) (string, error)
 	ValidateToken(ctx context.Context, token string) (*User, error)
 	RefreshToken(ctx context.Context, oldToken string) (string, error)
+}
+
+type AuthHandler interface {
+	Register(w http.ResponseWriter, r *http.Request)
+	Login(w http.ResponseWriter, r *http.Request)
+	Refresh(w http.ResponseWriter, r *http.Request)
+	Service() AuthService
+}
+
+type UserHandler interface {
+	GetUsers(w http.ResponseWriter, r *http.Request)
+	GetUser(w http.ResponseWriter, r *http.Request)
+}
+
+type TransactionHandler interface {
+	HandleCredit(w http.ResponseWriter, r *http.Request)
+	HandleDebit(w http.ResponseWriter, r *http.Request)
+	HandleTransfer(w http.ResponseWriter, r *http.Request)
+	HandleGetTransaction(w http.ResponseWriter, r *http.Request)
+	HandleGetTransactionHistory(w http.ResponseWriter, r *http.Request)
 }

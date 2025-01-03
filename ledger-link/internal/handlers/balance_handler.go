@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"net/http"
 	"strconv"
-	"time"
 
 	"ledger-link/internal/models"
 	"ledger-link/pkg/auth"
@@ -28,16 +27,17 @@ func NewBalanceHandler(balanceService models.BalanceService, logger *logger.Logg
 	}
 }
 
+// GetCurrentBalance returns the current user's balance
 func (h *BalanceHandler) GetCurrentBalance(w http.ResponseWriter, r *http.Request) {
-	userID := auth.GetUserIDFromContext(r.Context())
-	if userID == 0 {
+	user, ok := auth.GetUserFromContext(r.Context())
+	if !ok {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
 
-	balance, err := h.balanceService.GetBalance(r.Context(), userID)
+	balance, err := h.balanceService.GetBalance(r.Context(), user.ID)
 	if err != nil {
-		h.logger.Error("failed to get balance", "error", err, "user_id", userID)
+		h.logger.Error("failed to get balance", "error", err, "user_id", user.ID)
 		http.Error(w, "Failed to get balance", http.StatusInternalServerError)
 		return
 	}
@@ -46,9 +46,10 @@ func (h *BalanceHandler) GetCurrentBalance(w http.ResponseWriter, r *http.Reques
 	json.NewEncoder(w).Encode(balance)
 }
 
-func (h *BalanceHandler) GetHistoricalBalances(w http.ResponseWriter, r *http.Request) {
-	userID := auth.GetUserIDFromContext(r.Context())
-	if userID == 0 {
+// GetBalanceHistory returns the current user's balance history
+func (h *BalanceHandler) GetBalanceHistory(w http.ResponseWriter, r *http.Request) {
+	user, ok := auth.GetUserFromContext(r.Context())
+	if !ok {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
@@ -64,43 +65,13 @@ func (h *BalanceHandler) GetHistoricalBalances(w http.ResponseWriter, r *http.Re
 		}
 	}
 
-	history, err := h.balanceService.GetBalanceHistory(r.Context(), userID, limit)
+	history, err := h.balanceService.GetBalanceHistory(r.Context(), user.ID, limit)
 	if err != nil {
-		h.logger.Error("failed to get balance history", "error", err, "user_id", userID)
+		h.logger.Error("failed to get balance history", "error", err, "user_id", user.ID)
 		http.Error(w, "Failed to get balance history", http.StatusInternalServerError)
 		return
 	}
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(history)
-}
-
-func (h *BalanceHandler) GetBalanceAtTime(w http.ResponseWriter, r *http.Request) {
-	userID := auth.GetUserIDFromContext(r.Context())
-	if userID == 0 {
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
-		return
-	}
-
-	timestampStr := r.URL.Query().Get("timestamp")
-	if timestampStr == "" {
-		http.Error(w, "timestamp parameter is required", http.StatusBadRequest)
-		return
-	}
-
-	timestamp, err := time.Parse(h.config.TimeFormat, timestampStr)
-	if err != nil {
-		http.Error(w, "invalid timestamp format, use "+h.config.TimeFormat, http.StatusBadRequest)
-		return
-	}
-
-	balance, err := h.balanceService.GetBalanceAtTime(r.Context(), userID, timestamp)
-	if err != nil {
-		h.logger.Error("failed to get balance at time", "error", err, "user_id", userID, "timestamp", timestamp)
-		http.Error(w, "Failed to get balance at time", http.StatusInternalServerError)
-		return
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(balance)
 }

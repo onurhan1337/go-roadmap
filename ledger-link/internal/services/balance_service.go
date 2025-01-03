@@ -74,7 +74,7 @@ func (s *BalanceService) UpdateBalance(ctx context.Context, userID uint, amount 
 	}
 
 	oldAmount := balance.SafeAmount()
-	newAmount := oldAmount + amount
+	newAmount := amount
 
 	if newAmount < 0 {
 		return fmt.Errorf("balance cannot be negative")

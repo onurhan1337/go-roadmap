@@ -7,19 +7,19 @@ import (
 
 	"ledger-link/internal/models"
 	"ledger-link/pkg/auth"
+	"ledger-link/pkg/httputil"
 	"ledger-link/pkg/logger"
-	"ledger-link/pkg/router"
 )
 
 type TransactionHandler struct {
 	transactionService models.TransactionService
-	logger            *logger.Logger
+	logger             *logger.Logger
 }
 
 func NewTransactionHandler(transactionService models.TransactionService, logger *logger.Logger) *TransactionHandler {
 	return &TransactionHandler{
 		transactionService: transactionService,
-		logger:            logger,
+		logger:             logger,
 	}
 }
 
@@ -35,8 +35,8 @@ type TransferRequest struct {
 }
 
 func (h *TransactionHandler) HandleCredit(w http.ResponseWriter, r *http.Request) {
-	userID := auth.GetUserIDFromContext(r.Context())
-	if userID == 0 {
+	user, ok := auth.GetUserFromContext(r.Context())
+	if !ok {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
@@ -47,7 +47,7 @@ func (h *TransactionHandler) HandleCredit(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	if err := h.transactionService.Credit(r.Context(), userID, req.Amount, req.Notes); err != nil {
+	if err := h.transactionService.Credit(r.Context(), user.ID, req.Amount, req.Notes); err != nil {
 		h.logger.Error("failed to process credit", "error", err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -58,8 +58,8 @@ func (h *TransactionHandler) HandleCredit(w http.ResponseWriter, r *http.Request
 }
 
 func (h *TransactionHandler) HandleDebit(w http.ResponseWriter, r *http.Request) {
-	userID := auth.GetUserIDFromContext(r.Context())
-	if userID == 0 {
+	user, ok := auth.GetUserFromContext(r.Context())
+	if !ok {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
@@ -70,7 +70,7 @@ func (h *TransactionHandler) HandleDebit(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	if err := h.transactionService.Debit(r.Context(), userID, req.Amount, req.Notes); err != nil {
+	if err := h.transactionService.Debit(r.Context(), user.ID, req.Amount, req.Notes); err != nil {
 		h.logger.Error("failed to process debit", "error", err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -81,8 +81,8 @@ func (h *TransactionHandler) HandleDebit(w http.ResponseWriter, r *http.Request)
 }
 
 func (h *TransactionHandler) HandleTransfer(w http.ResponseWriter, r *http.Request) {
-	fromUserID := auth.GetUserIDFromContext(r.Context())
-	if fromUserID == 0 {
+	user, ok := auth.GetUserFromContext(r.Context())
+	if !ok {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
@@ -93,7 +93,7 @@ func (h *TransactionHandler) HandleTransfer(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	if err := h.transactionService.Transfer(r.Context(), fromUserID, req.ToUserID, req.Amount, req.Notes); err != nil {
+	if err := h.transactionService.Transfer(r.Context(), user.ID, req.ToUserID, req.Amount, req.Notes); err != nil {
 		h.logger.Error("failed to process transfer", "error", err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -104,9 +104,29 @@ func (h *TransactionHandler) HandleTransfer(w http.ResponseWriter, r *http.Reque
 }
 
 func (h *TransactionHandler) HandleGetTransactionHistory(w http.ResponseWriter, r *http.Request) {
-	userID := auth.GetUserIDFromContext(r.Context())
-	if userID == 0 {
+	user, ok := auth.GetUserFromContext(r.Context())
+	if !ok {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	var userID uint
+	if user.Role == models.RoleAdmin {
+		userIDStr := r.URL.Query().Get("user_id")
+		if userIDStr != "" {
+			id, err := strconv.ParseUint(userIDStr, 10, 32)
+			if err != nil {
+				http.Error(w, "invalid user ID", http.StatusBadRequest)
+				return
+			}
+			userID = uint(id)
+		}
+	} else {
+		userID = user.ID
+	}
+
+	if userID == 0 {
+		http.Error(w, "user ID is required", http.StatusBadRequest)
 		return
 	}
 
@@ -122,14 +142,13 @@ func (h *TransactionHandler) HandleGetTransactionHistory(w http.ResponseWriter, 
 }
 
 func (h *TransactionHandler) HandleGetTransaction(w http.ResponseWriter, r *http.Request) {
-	userID := auth.GetUserIDFromContext(r.Context())
-	if userID == 0 {
+	user, ok := auth.GetUserFromContext(r.Context())
+	if !ok {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
 
-	params := r.Context().Value(router.PathParamsKey).(map[string]string)
-	transIDStr := params["id"]
+	transIDStr := httputil.GetPathParam(r.Context(), "id")
 	if transIDStr == "" {
 		http.Error(w, "transaction ID is required", http.StatusBadRequest)
 		return
@@ -143,8 +162,21 @@ func (h *TransactionHandler) HandleGetTransaction(w http.ResponseWriter, r *http
 
 	transaction, err := h.transactionService.GetTransaction(r.Context(), uint(transID))
 	if err != nil {
+		if err == models.ErrNotFound {
+			http.Error(w, "transaction not found", http.StatusNotFound)
+			return
+		}
 		h.logger.Error("failed to get transaction", "error", err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	if user.Role != models.RoleAdmin && transaction.FromUserID != user.ID && transaction.ToUserID != user.ID {
+		h.logger.Error("unauthorized access to transaction",
+			"user_id", user.ID,
+			"transaction_from", transaction.FromUserID,
+			"transaction_to", transaction.ToUserID)
+		http.Error(w, "forbidden", http.StatusForbidden)
 		return
 	}
 

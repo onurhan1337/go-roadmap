@@ -9,7 +9,9 @@ import (
 
 	"ledger-link/config"
 	"ledger-link/internal/database"
+	"ledger-link/internal/router"
 	"ledger-link/pkg/logger"
+	"ledger-link/pkg/middleware"
 	"ledger-link/pkg/server"
 )
 
@@ -24,7 +26,7 @@ func main() {
 	logger := logger.New(cfg.LogLevel)
 
 	// Connect to database
-	db, err := database.InitDB()
+	db, err := database.InitDB(cfg.Database)
 	if err != nil {
 		logger.Fatal("Failed to initialize database", "error", err)
 	}
@@ -32,11 +34,34 @@ func main() {
 	// Initialize service container
 	container := config.NewServiceContainer(db, logger, cfg)
 
-	// Create and configure HTTP server
-	srv := server.New(cfg, container, logger)
+	// Setup middleware
+	authMiddleware := middleware.NewAuthMiddleware(container.AuthService, logger)
+	rbacMiddleware := middleware.NewRBACMiddleware(logger)
+	errorMiddleware := middleware.NewErrorMiddleware(logger)
+	metricsMiddleware := middleware.NewMetricsMiddleware(logger)
+
+	// Initialize router with RBAC
+	r := router.NewRouter(
+		container.AuthHandler,
+		container.UserHandler,
+		container.TransactionHandler,
+		container.BalanceHandler,
+		authMiddleware,
+		rbacMiddleware,
+	)
+
+	// Create and configure HTTP server with the router
+	srv := server.New(cfg.Server, r, logger)
+
+	// Apply global middleware
+	srv.Use(middleware.Chain(
+		errorMiddleware.HandleError,
+		metricsMiddleware.TrackPerformance,
+	))
 
 	// Start server in a goroutine
 	go func() {
+		logger.Info("Starting server", "address", cfg.Server.Address, "port", cfg.Server.Port)
 		if err := srv.Start(); err != nil {
 			logger.Fatal("Failed to start server", "error", err)
 		}
@@ -50,7 +75,7 @@ func main() {
 	// Graceful shutdown
 	logger.Info("Shutting down server...")
 
-	ctx, cancel := context.WithTimeout(context.Background(), cfg.HTTPIdleTimeout)
+	ctx, cancel := context.WithTimeout(context.Background(), cfg.Server.HTTPIdleTimeout)
 	defer cancel()
 
 	if err := srv.Stop(ctx); err != nil {

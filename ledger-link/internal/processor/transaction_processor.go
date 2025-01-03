@@ -10,7 +10,7 @@ import (
 )
 
 type TransactionProcessor struct {
-	repo      models.TransactionRepository
+	repo       models.TransactionRepository
 	balanceSvc models.BalanceService
 	auditSvc   models.AuditService
 	logger     *logger.Logger
@@ -24,7 +24,7 @@ func NewTransactionProcessor(
 	logger *logger.Logger,
 ) *TransactionProcessor {
 	return &TransactionProcessor{
-		repo:      repo,
+		repo:       repo,
 		balanceSvc: balanceSvc,
 		auditSvc:   auditSvc,
 		logger:     logger,
@@ -99,7 +99,6 @@ func (p *TransactionProcessor) processTransfer(ctx context.Context, tx *models.T
 	fromLock := p.getBalanceLock(tx.FromUserID)
 	toLock := p.getBalanceLock(tx.ToUserID)
 
-	// Lock in a consistent order to prevent deadlocks
 	if tx.FromUserID < tx.ToUserID {
 		fromLock.Lock()
 		toLock.Lock()
@@ -117,13 +116,30 @@ func (p *TransactionProcessor) processTransfer(ctx context.Context, tx *models.T
 		}
 	}()
 
-	if err := p.balanceSvc.UpdateBalance(ctx, tx.FromUserID, -tx.Amount); err != nil {
+	fromBalance, err := p.balanceSvc.GetBalance(ctx, tx.FromUserID)
+	if err != nil {
+		return fmt.Errorf("failed to get sender balance: %w", err)
+	}
+
+	if fromBalance.SafeAmount() < tx.Amount {
+		return fmt.Errorf("insufficient funds")
+	}
+
+	newFromBalance := fromBalance.SafeAmount() - tx.Amount
+
+	toBalance, err := p.balanceSvc.GetBalance(ctx, tx.ToUserID)
+	if err != nil {
+		return fmt.Errorf("failed to get receiver balance: %w", err)
+	}
+
+	newToBalance := toBalance.SafeAmount() + tx.Amount
+
+	if err := p.balanceSvc.UpdateBalance(ctx, tx.FromUserID, newFromBalance); err != nil {
 		return fmt.Errorf("failed to debit sender: %w", err)
 	}
 
-	if err := p.balanceSvc.UpdateBalance(ctx, tx.ToUserID, tx.Amount); err != nil {
-		// Rollback the debit if crediting fails
-		if rollbackErr := p.balanceSvc.UpdateBalance(ctx, tx.FromUserID, tx.Amount); rollbackErr != nil {
+	if err := p.balanceSvc.UpdateBalance(ctx, tx.ToUserID, newToBalance); err != nil {
+		if rollbackErr := p.balanceSvc.UpdateBalance(ctx, tx.FromUserID, fromBalance.SafeAmount()); rollbackErr != nil {
 			p.logger.Error("failed to rollback debit", "error", rollbackErr)
 		}
 		return fmt.Errorf("failed to credit receiver: %w", err)

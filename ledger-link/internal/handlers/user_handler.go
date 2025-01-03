@@ -7,8 +7,9 @@ import (
 
 	"ledger-link/internal/models"
 	"ledger-link/internal/services"
+	"ledger-link/pkg/auth"
+	"ledger-link/pkg/httputil"
 	"ledger-link/pkg/logger"
-	"ledger-link/pkg/router"
 )
 
 type UserHandler struct {
@@ -24,7 +25,26 @@ func NewUserHandler(userSvc *services.UserService, logger *logger.Logger) *UserH
 }
 
 func (h *UserHandler) GetUsers(w http.ResponseWriter, r *http.Request) {
-	users, err := h.userSvc.GetUsers(r.Context())
+	user, ok := auth.GetUserFromContext(r.Context())
+	if !ok {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	var users []*models.User
+	var err error
+
+	if user.Role == models.RoleAdmin {
+		// Admin gets all users
+		users, err = h.userSvc.GetUsers(r.Context())
+	} else {
+		// Regular user only gets their own data
+		ownUser, err := h.userSvc.GetByID(r.Context(), user.ID)
+		if err == nil {
+			users = []*models.User{ownUser}
+		}
+	}
+
 	if err != nil {
 		h.logger.Error("failed to get users", "error", err)
 		http.Error(w, "Failed to get users", http.StatusInternalServerError)
@@ -36,7 +56,7 @@ func (h *UserHandler) GetUsers(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *UserHandler) GetUser(w http.ResponseWriter, r *http.Request) {
-	idStr := router.GetParam(r, "id")
+	idStr := httputil.GetPathParam(r.Context(), "id")
 	id, err := strconv.ParseUint(idStr, 10, 32)
 	if err != nil {
 		http.Error(w, "Invalid user ID", http.StatusBadRequest)
@@ -59,7 +79,7 @@ func (h *UserHandler) GetUser(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *UserHandler) UpdateUser(w http.ResponseWriter, r *http.Request) {
-	idStr := router.GetParam(r, "id")
+	idStr := httputil.GetPathParam(r.Context(), "id")
 	id, err := strconv.ParseUint(idStr, 10, 32)
 	if err != nil {
 		http.Error(w, "Invalid user ID", http.StatusBadRequest)
@@ -96,7 +116,7 @@ func (h *UserHandler) UpdateUser(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *UserHandler) DeleteUser(w http.ResponseWriter, r *http.Request) {
-	idStr := router.GetParam(r, "id")
+	idStr := httputil.GetPathParam(r.Context(), "id")
 	id, err := strconv.ParseUint(idStr, 10, 32)
 	if err != nil {
 		http.Error(w, "Invalid user ID", http.StatusBadRequest)
