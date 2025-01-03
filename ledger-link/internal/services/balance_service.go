@@ -11,12 +11,12 @@ import (
 )
 
 type BalanceService struct {
-	repo      models.BalanceRepository
-	auditSvc  models.AuditService
-	logger    *logger.Logger
-	cacheMu   sync.RWMutex
-	cache     map[uint]*models.Balance
-	locks     sync.Map
+	repo     models.BalanceRepository
+	auditSvc models.AuditService
+	logger   *logger.Logger
+	cacheMu  sync.RWMutex
+	cache    map[uint]*models.Balance
+	locks    sync.Map
 }
 
 func NewBalanceService(
@@ -114,10 +114,12 @@ func (s *BalanceService) LockBalance(ctx context.Context, userID uint) (*sync.Mu
 }
 
 func (s *BalanceService) GetBalanceHistory(ctx context.Context, userID uint, limit int) ([]models.BalanceHistory, error) {
-	if limit <= 0 {
-		limit = 10
+	history, err := s.repo.GetBalanceHistory(ctx, userID, limit)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get balance history: %w", err)
 	}
-	return s.repo.GetBalanceHistory(ctx, userID, limit)
+
+	return history, nil
 }
 
 func (s *BalanceService) createBalanceHistory(ctx context.Context, history *models.BalanceHistory) error {
@@ -133,4 +135,33 @@ func (s *BalanceService) InvalidateCache(userID uint) {
 	s.cacheMu.Lock()
 	delete(s.cache, userID)
 	s.cacheMu.Unlock()
+}
+
+func (s *BalanceService) GetBalanceAtTime(ctx context.Context, userID uint, timestamp time.Time) (*models.Balance, error) {
+	currentBalance, err := s.GetBalance(ctx, userID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get current balance: %w", err)
+	}
+
+	balance := &models.Balance{
+		UserID:        currentBalance.UserID,
+		Amount:        currentBalance.SafeAmount(),
+		LastUpdatedAt: currentBalance.LastUpdatedAt,
+	}
+
+	history, err := s.repo.GetBalanceHistory(ctx, userID, 1000)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get balance history: %w", err)
+	}
+
+	for i := len(history) - 1; i >= 0; i-- {
+		if history[i].CreatedAt.After(timestamp) {
+			balance.Amount = history[i].OldAmount
+			balance.LastUpdatedAt = history[i].CreatedAt
+		} else {
+			break
+		}
+	}
+
+	return balance, nil
 }

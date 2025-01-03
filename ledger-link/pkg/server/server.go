@@ -27,26 +27,37 @@ func New(cfg *config.Config, container *config.ServiceContainer, logger *logger.
 
 	router := router.New(container.AuthService)
 
-	// Auth routes
+	// Create handler configs
+	balanceConfig := handlers.DefaultBalanceHandlerConfig()
+
+	// Initialize handlers with configs
+	balanceHandler := handlers.NewBalanceHandler(container.BalanceService, logger, balanceConfig)
 	authHandler := handlers.NewAuthHandler(container.AuthService, logger)
+	transactionHandler := handlers.NewTransactionHandler(container.TransactionService, logger)
+	userHandler := handlers.NewUserHandler(container.UserService, logger)
+
+	// Auth routes
 	router.POST("/api/v1/auth/register", authHandler.Register)
 	router.POST("/api/v1/auth/login", authHandler.Login)
 	router.POST("/api/v1/auth/refresh", authHandler.RefreshToken)
 
 	// User routes
-	userHandler := handlers.NewUserHandler(container.UserService, logger)
 	router.GET("/api/v1/users", userHandler.GetUsers)
 	router.GET("/api/v1/users/{id}", userHandler.GetUser)
 	router.PUT("/api/v1/users/{id}", userHandler.UpdateUser)
 	router.DELETE("/api/v1/users/{id}", userHandler.DeleteUser)
 
 	// Transaction routes
-	transactionHandler := handlers.NewTransactionHandler(container.TransactionService, logger)
 	router.POST("/api/v1/transactions/credit", transactionHandler.HandleCredit)
 	router.POST("/api/v1/transactions/debit", transactionHandler.HandleDebit)
 	router.POST("/api/v1/transactions/transfer", transactionHandler.HandleTransfer)
 	router.GET("/api/v1/transactions/history", transactionHandler.HandleGetTransactionHistory)
 	router.GET("/api/v1/transactions/{id}", transactionHandler.HandleGetTransaction)
+
+	// Balance routes
+	router.GET("/api/v1/balances/current", balanceHandler.GetCurrentBalance)
+	router.GET("/api/v1/balances/historical", balanceHandler.GetHistoricalBalances)
+	router.GET("/api/v1/balances/at-time", balanceHandler.GetBalanceAtTime)
 
 	s.server = &http.Server{
 		Addr:         ":" + cfg.HTTPPort,

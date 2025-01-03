@@ -3,6 +3,7 @@ package repositories
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"gorm.io/gorm"
 
@@ -46,10 +47,21 @@ func (r *BalanceRepository) Update(ctx context.Context, balance *models.Balance)
 
 func (r *BalanceRepository) GetBalanceHistory(ctx context.Context, userID uint, limit int) ([]models.BalanceHistory, error) {
 	var history []models.BalanceHistory
-	if err := r.db.WithContext(ctx).Where("user_id = ?", userID).Order("created_at desc").Limit(limit).Find(&history).Error; err != nil {
-		return nil, fmt.Errorf("failed to get balance history: %w", err)
-	}
-	return history, nil
+	err := r.db.WithContext(ctx).
+		Where("user_id = ?", userID).
+		Order("created_at DESC").
+		Limit(limit).
+		Find(&history).Error
+	return history, err
+}
+
+func (r *BalanceRepository) GetBalanceHistoryAfterTime(ctx context.Context, userID uint, timestamp time.Time) ([]models.BalanceHistory, error) {
+	var history []models.BalanceHistory
+	err := r.db.WithContext(ctx).
+		Where("user_id = ? AND created_at >= ?", userID, timestamp).
+		Order("created_at ASC").
+		Find(&history).Error
+	return history, err
 }
 
 func (r *BalanceRepository) CreateBalanceHistory(ctx context.Context, history *models.BalanceHistory) error {

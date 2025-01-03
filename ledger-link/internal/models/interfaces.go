@@ -3,6 +3,7 @@ package models
 import (
 	"context"
 	"sync"
+	"time"
 )
 
 type UserRepository interface {
@@ -64,6 +65,8 @@ type BalanceService interface {
 	GetBalance(ctx context.Context, userID uint) (*Balance, error)
 	UpdateBalance(ctx context.Context, userID uint, amount float64) error
 	LockBalance(ctx context.Context, userID uint) (*sync.Mutex, error)
+	GetBalanceHistory(ctx context.Context, userID uint, limit int) ([]BalanceHistory, error)
+	GetBalanceAtTime(ctx context.Context, userID uint, timestamp time.Time) (*Balance, error)
 }
 
 type AuditService interface {
