@@ -1,6 +1,26 @@
 version: "3.8"
 
 services:
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: ledger_link_api
+    ports:
+      - "8080:8080"
+    environment:
+      - DB_HOST=mysql
+      - DB_PORT=3306
+      - DB_USER=ledger_user
+      - DB_PASSWORD=ledger_pass
+      - DB_NAME=ledger_link
+      - HTTP_PORT=8080
+      - JWT_SECRET=your-secret-key-here
+    depends_on:
+      mysql:
+        condition: service_healthy
+    restart: unless-stopped
+
   mysql:
     image: mysql:8.0
     container_name: ledger_link_mysql
