@@ -25,7 +25,7 @@ func New(cfg *config.Config, container *config.ServiceContainer, logger *logger.
 		logger:    logger,
 	}
 
-	router := router.New()
+	router := router.New(container.AuthService)
 
 	// Auth routes
 	authHandler := handlers.NewAuthHandler(container.AuthService, logger)
@@ -39,6 +39,14 @@ func New(cfg *config.Config, container *config.ServiceContainer, logger *logger.
 	router.GET("/api/v1/users/{id}", userHandler.GetUser)
 	router.PUT("/api/v1/users/{id}", userHandler.UpdateUser)
 	router.DELETE("/api/v1/users/{id}", userHandler.DeleteUser)
+
+	// Transaction routes
+	transactionHandler := handlers.NewTransactionHandler(container.TransactionService, logger)
+	router.POST("/api/v1/transactions/credit", transactionHandler.HandleCredit)
+	router.POST("/api/v1/transactions/debit", transactionHandler.HandleDebit)
+	router.POST("/api/v1/transactions/transfer", transactionHandler.HandleTransfer)
+	router.GET("/api/v1/transactions/history", transactionHandler.HandleGetTransactionHistory)
+	router.GET("/api/v1/transactions/{id}", transactionHandler.HandleGetTransaction)
 
 	s.server = &http.Server{
 		Addr:         ":" + cfg.HTTPPort,

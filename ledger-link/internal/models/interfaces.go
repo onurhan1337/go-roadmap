@@ -51,7 +51,11 @@ type TransactionService interface {
 	CreateTransaction(ctx context.Context, tx *Transaction) error
 	ProcessTransaction(ctx context.Context, tx *Transaction) error
 	GetUserTransactions(ctx context.Context, userID uint) ([]Transaction, error)
+	GetTransaction(ctx context.Context, transactionID uint) (*Transaction, error)
 	SubmitTransaction(ctx context.Context, tx *Transaction) error
+	Credit(ctx context.Context, userID uint, amount float64, notes string) error
+	Debit(ctx context.Context, userID uint, amount float64, notes string) error
+	Transfer(ctx context.Context, fromUserID, toUserID uint, amount float64, notes string) error
 	Start(ctx context.Context) error
 	Stop()
 }
@@ -71,4 +75,11 @@ type TransactionProcessor interface {
 	Start(ctx context.Context) error
 	Stop()
 	Submit(tx *Transaction) error
+}
+
+type AuthService interface {
+	Login(ctx context.Context, email, password string) (string, error)
+	Register(ctx context.Context, email, password, username string) (string, error)
+	ValidateToken(ctx context.Context, token string) (*User, error)
+	RefreshToken(ctx context.Context, oldToken string) (string, error)
 }

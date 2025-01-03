@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"ledger-link/internal/models"
 	"ledger-link/pkg/logger"
 	"ledger-link/pkg/middleware"
 )
@@ -18,8 +19,9 @@ const (
 )
 
 type Router struct {
-	routes []*route
-	logger *logger.Logger
+	routes      []*route
+	logger      *logger.Logger
+	authService models.AuthService
 }
 
 type route struct {
@@ -29,10 +31,11 @@ type route struct {
 	params  []string
 }
 
-func New() *Router {
+func New(authService models.AuthService) *Router {
 	return &Router{
-		routes: make([]*route, 0),
-		logger: logger.New("info"),
+		routes:      make([]*route, 0),
+		logger:      logger.New("info"),
+		authService: authService,
 	}
 }
 
@@ -44,6 +47,7 @@ func (r *Router) Handler() http.Handler {
 	handler = middleware.CORS()(handler)
 	handler = middleware.SecurityHeaders()(handler)
 	handler = middleware.RequestLogger(r.logger)(handler)
+	handler = middleware.Authenticate(r.authService)(handler)
 
 	return handler
 }

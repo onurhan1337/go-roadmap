@@ -6,6 +6,7 @@ import (
 
 	"ledger-link/internal/models"
 	"ledger-link/internal/processor"
+	"ledger-link/pkg/auth"
 	"ledger-link/pkg/logger"
 )
 
@@ -211,4 +212,30 @@ func (s *TransactionService) SubmitTransaction(ctx context.Context, tx *models.T
 	}
 
 	return nil
+}
+
+func (s *TransactionService) GetTransaction(ctx context.Context, transactionID uint) (*models.Transaction, error) {
+	tx, err := s.repo.GetByID(ctx, transactionID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get transaction: %w", err)
+	}
+
+	userID := auth.GetUserIDFromContext(ctx)
+	if userID == 0 {
+		return nil, fmt.Errorf("unauthorized access")
+	}
+
+	if tx.FromUserID != userID && tx.ToUserID != userID {
+		return nil, fmt.Errorf("unauthorized access to transaction")
+	}
+
+	return tx, nil
+}
+
+func (s *TransactionService) Start(ctx context.Context) error {
+	return s.processor.Start(ctx)
+}
+
+func (s *TransactionService) Stop() {
+	s.processor.Stop()
 }

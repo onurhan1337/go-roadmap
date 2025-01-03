@@ -28,7 +28,12 @@ func (r *TransactionRepository) Create(ctx context.Context, tx *models.Transacti
 
 func (r *TransactionRepository) GetByID(ctx context.Context, id uint) (*models.Transaction, error) {
 	var transaction models.Transaction
-	if err := r.db.WithContext(ctx).First(&transaction, id).Error; err != nil {
+	if err := r.db.WithContext(ctx).
+		Preload("FromUser").
+		Preload("ToUser").
+		Preload("FromUser.Balance").
+		Preload("ToUser.Balance").
+		First(&transaction, id).Error; err != nil {
 		if err == gorm.ErrRecordNotFound {
 			return nil, models.ErrNotFound
 		}
@@ -39,7 +44,14 @@ func (r *TransactionRepository) GetByID(ctx context.Context, id uint) (*models.T
 
 func (r *TransactionRepository) GetByUserID(ctx context.Context, userID uint) ([]models.Transaction, error) {
 	var transactions []models.Transaction
-	if err := r.db.WithContext(ctx).Where("from_user_id = ? OR to_user_id = ?", userID, userID).Order("created_at desc").Find(&transactions).Error; err != nil {
+	if err := r.db.WithContext(ctx).
+		Preload("FromUser").
+		Preload("ToUser").
+		Preload("FromUser.Balance").
+		Preload("ToUser.Balance").
+		Where("from_user_id = ? OR to_user_id = ?", userID, userID).
+		Order("created_at desc").
+		Find(&transactions).Error; err != nil {
 		return nil, fmt.Errorf("failed to get user transactions: %w", err)
 	}
 	return transactions, nil

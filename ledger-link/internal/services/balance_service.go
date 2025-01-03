@@ -74,7 +74,13 @@ func (s *BalanceService) UpdateBalance(ctx context.Context, userID uint, amount 
 	}
 
 	oldAmount := balance.SafeAmount()
-	balance.UpdateAmount(amount)
+	newAmount := oldAmount + amount
+
+	if newAmount < 0 {
+		return fmt.Errorf("balance cannot be negative")
+	}
+
+	balance.UpdateAmount(newAmount)
 
 	if err := s.repo.Update(ctx, balance); err != nil {
 		balance.UpdateAmount(oldAmount)
@@ -84,14 +90,14 @@ func (s *BalanceService) UpdateBalance(ctx context.Context, userID uint, amount 
 	history := &models.BalanceHistory{
 		UserID:    userID,
 		OldAmount: oldAmount,
-		NewAmount: amount,
+		NewAmount: newAmount,
 		CreatedAt: time.Now(),
 	}
 	if err := s.createBalanceHistory(ctx, history); err != nil {
 		s.logger.Error("failed to create balance history", "error", err)
 	}
 
-	details := fmt.Sprintf("Balance updated from %.2f to %.2f", oldAmount, amount)
+	details := fmt.Sprintf("Balance updated from %.2f to %.2f", oldAmount, newAmount)
 	if err := s.auditSvc.LogAction(ctx, models.EntityTypeBalance, userID, models.ActionUpdate, details); err != nil {
 		s.logger.Error("failed to log balance update", "error", err)
 	}

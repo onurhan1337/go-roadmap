@@ -141,3 +141,12 @@ func (p *TransactionProcessor) getBalanceLock(userID uint) *sync.Mutex {
 	lock, _ := p.locks.LoadOrStore(userID, &sync.Mutex{})
 	return lock.(*sync.Mutex)
 }
+
+func (p *TransactionProcessor) Start(ctx context.Context) error {
+	p.logger.Info("starting transaction processor")
+	return nil
+}
+
+func (p *TransactionProcessor) Stop() {
+	p.logger.Info("stopping transaction processor")
+}
