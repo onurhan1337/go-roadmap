@@ -2,6 +2,7 @@ package router
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
@@ -9,6 +10,9 @@ import (
 	"ledger-link/internal/handlers"
 	"ledger-link/pkg/httputil"
 	"ledger-link/pkg/middleware"
+
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
 func getIDFromPath(path string) string {
@@ -29,6 +33,10 @@ func NewRouter(
 ) http.Handler {
 	mux := http.NewServeMux()
 
+	// Add metrics endpoint first
+	mux.Handle("/metrics", promhttp.Handler())
+
+	// Register all routes
 	mux.HandleFunc("/api/v1/auth/register", authHandler.Register)
 	mux.HandleFunc("/api/v1/auth/login", authHandler.Login)
 	mux.HandleFunc("/api/v1/auth/refresh", authHandler.RefreshToken)
@@ -157,5 +165,25 @@ func NewRouter(
 		).ServeHTTP(w, r)
 	})
 
-	return mux
+	mux.Handle("/debug/metrics", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		metrics, err := prometheus.DefaultGatherer.Gather()
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		w.Header().Set("Content-Type", "text/plain")
+		for _, m := range metrics {
+			w.Write([]byte(fmt.Sprintf("# HELP %s %s\n", m.GetName(), m.GetHelp())))
+			w.Write([]byte(fmt.Sprintf("# TYPE %s %s\n", m.GetName(), m.GetType())))
+			for _, metric := range m.GetMetric() {
+				w.Write([]byte(fmt.Sprintf("%s\n", metric.String())))
+			}
+		}
+	}))
+
+	// Wrap everything with metrics middleware at the end
+	handler := middleware.MetricsMiddleware(mux)
+
+	return handler
 }

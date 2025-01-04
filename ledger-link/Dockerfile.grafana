@@ -1,0 +1,19 @@
+FROM grafana/grafana:latest
+
+USER root
+
+# Create directories
+RUN mkdir -p /etc/grafana/provisioning/dashboards \
+    && mkdir -p /etc/grafana/provisioning/datasources \
+    && mkdir -p /etc/grafana/dashboards
+
+# Copy configurations
+COPY config/grafana/provisioning/datasources /etc/grafana/provisioning/datasources/
+COPY config/grafana/provisioning/dashboards /etc/grafana/provisioning/dashboards/
+COPY config/grafana/dashboards /etc/grafana/dashboards/
+
+# Set permissions using numeric IDs
+RUN chown -R 472:472 /etc/grafana \
+    && chmod -R 755 /etc/grafana
+
+USER 472 

@@ -1,41 +1,22 @@
-# Build stage
-FROM golang:1.22-alpine AS builder
+FROM golang:1.22-alpine
+
+# Install curl for healthcheck
+RUN apk add --no-cache curl
 
 WORKDIR /app
 
-# Install build dependencies
-RUN apk add --no-cache gcc musl-dev
+# Set GOPROXY with fallbacks and disable module verification
+ENV GOPROXY=https://proxy.golang.org,direct \
+    GOSUMDB=off \
+    GO111MODULE=on
 
-# Copy go mod files
 COPY go.mod go.sum ./
+RUN go mod download || go mod download || go mod download
 
-# Download dependencies
-RUN go mod download
-
-# Copy the source code
 COPY . .
 
-# Build the application
-RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o main .
+RUN go build -o main .
 
-# Final stage
-FROM alpine:3.19
-
-WORKDIR /app
-
-# Install runtime dependencies
-RUN apk add --no-cache ca-certificates tzdata
-
-# Copy the binary from builder
-COPY --from=builder /app/main .
-COPY --from=builder /app/internal/database/migrations ./internal/database/migrations
-
-# Create non-root user
-RUN adduser -D -g '' appuser
-USER appuser
-
-# Expose port
 EXPOSE 8080
 
-# Run the application
 CMD ["./main"] 

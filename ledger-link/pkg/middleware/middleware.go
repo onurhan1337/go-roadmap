@@ -74,7 +74,7 @@ func RequestLogger(log *logger.Logger) func(http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			start := time.Now()
 
-			rw := newResponseWriter(w)
+			rw := NewResponseWriter(w)
 			next.ServeHTTP(rw, r)
 
 			duration := time.Since(start)
@@ -82,7 +82,7 @@ func RequestLogger(log *logger.Logger) func(http.Handler) http.Handler {
 			log.Info("request completed",
 				"method", r.Method,
 				"path", r.URL.Path,
-				"status", rw.status,
+				"status", rw.statusCode,
 				"duration", duration,
 				"request_id", r.Context().Value(RequestIDKey),
 			)
@@ -105,18 +105,4 @@ func Recovery(log *logger.Logger) func(http.Handler) http.Handler {
 			next.ServeHTTP(w, r)
 		})
 	}
-}
-
-type responseWriter struct {
-	http.ResponseWriter
-	status int
-}
-
-func newResponseWriter(w http.ResponseWriter) *responseWriter {
-	return &responseWriter{ResponseWriter: w}
-}
-
-func (rw *responseWriter) WriteHeader(code int) {
-	rw.status = code
-	rw.ResponseWriter.WriteHeader(code)
 }

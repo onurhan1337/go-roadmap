@@ -1,94 +1,98 @@
-version: "3.8"
+version: '3.8'
 
 services:
-  api:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    container_name: ledger_link_api
+  ledger-link:
+    build: .
     ports:
       - "8080:8080"
-    environment:
-      - DB_HOST=mysql
-      - DB_PORT=3306
-      - DB_USER=ledger_user
-      - DB_PASSWORD=ledger_pass
-      - DB_NAME=ledger_link
-      - REDIS_HOST=redis
-      - REDIS_PORT=6379
-      - HTTP_PORT=8080
-      - JWT_SECRET=your-secret-key-here
-      - LOG_LEVEL=info
-      - REDIS_PASSWORD=${REDIS_PASSWORD:-redispass}
+    networks:
+      - monitoring-network
     depends_on:
       mysql:
         condition: service_healthy
       redis:
-        condition: service_healthy
-    restart: unless-stopped
+        condition: service_started
+    environment:
+      - DB_HOST=mysql
+      - DB_PORT=3306
+      - DB_USER=root
+      - DB_PASSWORD=root
+      - DB_NAME=ledger_link
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
     healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://localhost:8080/health"]
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
       interval: 30s
       timeout: 10s
       retries: 3
-      start_period: 10s
+    labels:
+      - "prometheus.io/scrape=true"
+      - "prometheus.io/port=8080"
+      - "prometheus.io/path=/metrics"
+
+  redis:
+    image: redis:latest
+    ports:
+      - "6379:6379"
     networks:
-      - ledger_network
+      - monitoring-network
 
   mysql:
     image: mysql:8.0
-    container_name: ledger_link_mysql
-    environment:
-      MYSQL_ROOT_PASSWORD: rootpass
-      MYSQL_DATABASE: ledger_link
-      MYSQL_USER: ledger_user
-      MYSQL_PASSWORD: ledger_pass
     ports:
       - "3306:3306"
+    environment:
+      - MYSQL_ROOT_PASSWORD=root
+      - MYSQL_DATABASE=ledger_link
+    networks:
+      - monitoring-network
     volumes:
       - mysql_data:/var/lib/mysql
-      - ./internal/database/migrations:/docker-entrypoint-initdb.d
-    command: 
-      - --character-set-server=utf8mb4
-      - --collation-server=utf8mb4_unicode_ci
-      - --default-authentication-plugin=mysql_native_password
-      - --max-connections=1000
-      - --innodb-buffer-pool-size=1G
     healthcheck:
-      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "--password=rootpass"]
-      interval: 10s
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-p$$MYSQL_ROOT_PASSWORD"]
+      interval: 5s
       timeout: 5s
       retries: 5
-      start_period: 10s
-    restart: unless-stopped
-    networks:
-      - ledger_network
 
-  redis:
-    image: redis:7-alpine
-    container_name: ledger_link_redis
-    ports:
-      - "6379:6379"
+  prometheus:
+    build:
+      context: .
+      dockerfile: Dockerfile.prometheus
     volumes:
-      - redis_data:/data
-      - ./config/redis/redis.conf:/usr/local/etc/redis/redis.conf
-    command: redis-server /usr/local/etc/redis/redis.conf
-    environment:
-      - REDIS_PASSWORD=${REDIS_PASSWORD:-redispass}
-    healthcheck:
-      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD:-redispass}", "ping"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-      start_period: 10s
-    restart: unless-stopped
+      - prometheus_data:/prometheus
+    ports:
+      - "9090:9090"
     networks:
-      - ledger_network
+      - monitoring-network
+    restart: unless-stopped
+    user: nobody
+
+  grafana:
+    build:
+      context: .
+      dockerfile: Dockerfile.grafana
+    environment:
+      - GF_SECURITY_ADMIN_USER=${GRAFANA_ADMIN_USER:-admin}
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD:-admin}
+      - GF_USERS_ALLOW_SIGN_UP=false
+      - GF_AUTH_ANONYMOUS_ENABLED=true
+      - GF_AUTH_ANONYMOUS_ORG_ROLE=Viewer
+      - GF_INSTALL_PLUGINS=grafana-piechart-panel
+    volumes:
+      - grafana-storage:/var/lib/grafana
+    ports:
+      - "3000:3000"
+    networks:
+      - monitoring-network
+    restart: unless-stopped
+    depends_on:
+      - prometheus
+
+networks:
+  monitoring-network:
+    driver: bridge
 
 volumes:
   mysql_data:
-  redis_data:
-
-networks:
-  ledger_network:
-    driver: bridge
+  grafana-storage:
+  prometheus_data:

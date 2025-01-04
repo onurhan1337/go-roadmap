@@ -44,7 +44,9 @@ func NewServiceContainer(db *gorm.DB, logger *logger.Logger, cfg *Config) (*Serv
 	}
 
 	// Initialize cache service
-	cacheService := cache.NewCacheService(redisClient)
+	cacheService := cache.NewCacheService(&cache.Config{
+		RedisClient: redisClient,
+	})
 
 	// Initialize repositories
 	userRepo := repositories.NewUserRepository(db)

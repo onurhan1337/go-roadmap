@@ -1,0 +1,24 @@
+FROM prom/prometheus:latest
+
+USER root
+
+# Create directories and set permissions
+RUN mkdir -p /prometheus && \
+    mkdir -p /etc/prometheus && \
+    chown -R nobody:nobody /prometheus /etc/prometheus && \
+    chmod -R 755 /prometheus /etc/prometheus
+
+COPY config/prometheus/prometheus.yml /etc/prometheus/
+RUN chown nobody:nobody /etc/prometheus/prometheus.yml && \
+    chmod 644 /etc/prometheus/prometheus.yml
+
+USER nobody
+
+EXPOSE 9090
+
+CMD [ \
+    "--config.file=/etc/prometheus/prometheus.yml", \
+    "--storage.tsdb.path=/prometheus", \
+    "--web.console.libraries=/usr/share/prometheus/console_libraries", \
+    "--web.console.templates=/usr/share/prometheus/consoles" \
+] 
