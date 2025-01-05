@@ -14,6 +14,7 @@ import (
 	"ledger-link/internal/router"
 	"ledger-link/pkg/logger"
 	"ledger-link/pkg/middleware"
+	"ledger-link/pkg/ratelimit"
 
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
@@ -48,6 +49,7 @@ func main() {
 		container.BalanceHandler,
 		middleware.NewAuthMiddleware(container.AuthService, log),
 		middleware.NewRBACMiddleware(log),
+		ratelimit.NewRateLimiter(container.CacheService.RedisClient),
 	)
 
 	// Wrap router with middleware chain

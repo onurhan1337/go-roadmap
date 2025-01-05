@@ -26,6 +26,22 @@ var (
 		},
 		[]string{"method", "path"},
 	)
+
+	rateLimitExceeded = promauto.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "ledger_rate_limit_exceeded_total",
+			Help: "Total number of rate limit exceeded events",
+		},
+		[]string{"endpoint"},
+	)
+
+	rateLimitRemaining = promauto.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "ledger_rate_limit_remaining",
+			Help: "Number of remaining requests before rate limit is reached",
+		},
+		[]string{"endpoint", "client"},
+	)
 )
 
 func MetricsMiddleware(next http.Handler) http.Handler {
