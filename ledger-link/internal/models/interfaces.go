@@ -68,6 +68,7 @@ type BalanceService interface {
 	LockBalance(ctx context.Context, userID uint) (*sync.Mutex, error)
 	GetBalanceHistory(ctx context.Context, userID uint, limit int) ([]BalanceHistory, error)
 	GetBalanceAtTime(ctx context.Context, userID uint, timestamp time.Time) (*Balance, error)
+	CreateInitialBalance(ctx context.Context, balance *Balance) error
 }
 
 type AuditService interface {

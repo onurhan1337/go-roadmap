@@ -210,3 +210,21 @@ func (s *BalanceService) GetBalanceAtTime(ctx context.Context, userID uint, time
 
 	return balance, nil
 }
+
+func (s *BalanceService) CreateInitialBalance(ctx context.Context, balance *models.Balance) error {
+	if err := s.repo.Create(ctx, balance); err != nil {
+		return fmt.Errorf("failed to create initial balance: %w", err)
+	}
+
+	cacheKey := cache.BuildKey(cache.KeyBalance, balance.UserID)
+	if err := s.cache.Set(ctx, cacheKey, balance, cache.MediumTerm); err != nil {
+		s.logger.Error("failed to cache initial balance", "error", err)
+	}
+
+	details := fmt.Sprintf("Initial balance created with amount %.2f", balance.Amount)
+	if err := s.auditSvc.LogAction(ctx, models.EntityTypeBalance, balance.UserID, models.ActionCreate, details); err != nil {
+		s.logger.Error("failed to log initial balance creation", "error", err)
+	}
+
+	return nil
+}

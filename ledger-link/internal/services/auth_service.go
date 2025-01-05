@@ -56,17 +56,20 @@ type AuthService struct {
 	userSvc    models.UserService
 	tokenMaker auth.TokenMaker
 	logger     *logger.Logger
+	balanceSvc *BalanceService
 }
 
 func NewAuthService(
 	userSvc models.UserService,
 	tokenMaker auth.TokenMaker,
 	logger *logger.Logger,
+	balanceSvc *BalanceService,
 ) *AuthService {
 	svc := &AuthService{
 		userSvc:    userSvc,
 		tokenMaker: tokenMaker,
 		logger:     logger,
+		balanceSvc: balanceSvc,
 	}
 
 	// Initialize active users count
@@ -150,6 +153,17 @@ func (s *AuthService) Register(ctx context.Context, email, password, username st
 	if err != nil {
 		s.logger.Error("Token creation failed", "error", err)
 		return "", fmt.Errorf("failed to create token: %w", err)
+	}
+
+	// Create initial balance for the user
+	balance := &models.Balance{
+		UserID:        user.ID,
+		Amount:        0,
+		LastUpdatedAt: time.Now(),
+	}
+
+	if err := s.balanceSvc.CreateInitialBalance(ctx, balance); err != nil {
+		s.logger.Error("failed to create initial balance", "error", err, "userID", user.ID)
 	}
 
 	s.logger.Info("Token created successfully", "user_id", user.ID)
