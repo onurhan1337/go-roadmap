@@ -1,22 +1,49 @@
-FROM golang:1.22-alpine
-
-# Install curl for healthcheck
-RUN apk add --no-cache curl
+# Build stage
+FROM golang:1.22-alpine AS builder
 
 WORKDIR /app
 
-# Set GOPROXY with fallbacks and disable module verification
-ENV GOPROXY=https://proxy.golang.org,direct \
-    GOSUMDB=off \
-    GO111MODULE=on
+# Install build dependencies
+RUN apk add --no-cache gcc musl-dev
 
+# Set build env vars
+ENV CGO_ENABLED=0 \
+    GOOS=linux \
+    GOARCH=amd64
+
+# Copy go mod files
 COPY go.mod go.sum ./
-RUN go mod download || go mod download || go mod download
+RUN go mod download
 
+# Copy source code
 COPY . .
 
-RUN go build -o main .
+# Build the application
+RUN go build -ldflags="-w -s" -o main .
 
+# Final stage
+FROM alpine:3.19
+
+WORKDIR /app
+
+# Install runtime dependencies
+RUN apk add --no-cache ca-certificates curl tzdata
+
+# Copy binary and configs
+COPY --from=builder /app/main .
+COPY --from=builder /app/config ./config
+COPY .env.docker .env
+
+# Create non-root user
+RUN adduser -D appuser && \
+    chown -R appuser:appuser /app
+USER appuser
+
+# Expose port
 EXPOSE 8080
+
+# Health check - with a longer start period
+HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
+    CMD curl -f http://localhost:8080/health || exit 1
 
 CMD ["./main"] 

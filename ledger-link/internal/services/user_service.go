@@ -84,7 +84,6 @@ func (s *UserService) Create(ctx context.Context, user *models.User) error {
 	user.CreatedAt = time.Now()
 	user.UpdatedAt = time.Now()
 
-	// Create the user first
 	if err := s.repo.Create(ctx, user); err != nil {
 		userErrors.WithLabelValues("create", "database").Inc()
 		userOperations.WithLabelValues("create", "failure").Inc()
@@ -94,15 +93,21 @@ func (s *UserService) Create(ctx context.Context, user *models.User) error {
 	userCount.Inc()
 	userOperations.WithLabelValues("create", "success").Inc()
 
-	// Create audit log after user is created
-	details := fmt.Sprintf("User created with email: %s", user.Email)
-	if err := s.auditSvc.LogAction(ctx, models.EntityTypeUser, user.ID, models.ActionCreate, details); err != nil {
-		s.logger.Error("failed to log user creation", "error", err)
+	initialBalance := &models.Balance{
+		UserID:        user.ID,
+		Amount:        0,
+		LastUpdatedAt: time.Now(),
+		CreatedAt:     time.Now(),
+		UpdatedAt:     time.Now(),
 	}
 
-	// Initialize user's balance
-	if err := s.balanceService.UpdateBalance(ctx, user.ID, 0); err != nil {
-		s.logger.Error("failed to initialize user balance", "error", err)
+	if err := s.balanceService.CreateInitialBalance(ctx, initialBalance); err != nil {
+		s.logger.Error("failed to create initial balance", "error", err, "userID", user.ID)
+	}
+
+	details := fmt.Sprintf("User created with email: %s", user.Email)
+	if err := s.auditSvc.LogAction(ctx, models.EntityTypeUser, user.ID, models.ActionCreate, details); err != nil {
+		s.logger.Error("failed to log user creation", "error", err, "userID", user.ID)
 	}
 
 	return nil

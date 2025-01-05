@@ -20,9 +20,11 @@ func NewUserRepository(db *gorm.DB) *UserRepository {
 }
 
 func (r *UserRepository) Create(ctx context.Context, user *models.User) error {
-	if err := r.db.WithContext(ctx).Create(user).Error; err != nil {
-		return fmt.Errorf("failed to create user: %w", err)
+	result := r.db.Create(user)
+	if result.Error != nil {
+		return fmt.Errorf("failed to create user: %w", result.Error)
 	}
+
 	return nil
 }
 

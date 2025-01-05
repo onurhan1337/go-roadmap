@@ -2,7 +2,9 @@ version: '3.8'
 
 services:
   ledger-link:
-    build: .
+    build:
+      context: .
+      dockerfile: Dockerfile
     ports:
       - "8080:8080"
     networks:
@@ -11,48 +13,77 @@ services:
       mysql:
         condition: service_healthy
       redis:
-        condition: service_started
+        condition: service_healthy
     environment:
       - DB_HOST=mysql
       - DB_PORT=3306
-      - DB_USER=root
-      - DB_PASSWORD=root
+      - DB_USER=ledger_user
+      - DB_PASSWORD=ledger_pass
       - DB_NAME=ledger_link
       - REDIS_HOST=redis
       - REDIS_PORT=6379
+      - REDIS_PASSWORD=redispass
+      - LOG_LEVEL=debug
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
       interval: 30s
       timeout: 10s
       retries: 3
-    labels:
-      - "prometheus.io/scrape=true"
-      - "prometheus.io/port=8080"
-      - "prometheus.io/path=/metrics"
+      start_period: 30s
+    deploy:
+      resources:
+        limits:
+          cpus: '1'
+          memory: 1G
+    restart: unless-stopped
 
   redis:
-    image: redis:latest
+    image: redis:alpine
+    command: redis-server --requirepass redispass
     ports:
       - "6379:6379"
     networks:
       - monitoring-network
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "redispass", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 3
+      start_period: 10s
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 512M
+    restart: unless-stopped
 
   mysql:
     image: mysql:8.0
     ports:
       - "3306:3306"
     environment:
-      - MYSQL_ROOT_PASSWORD=root
+      - MYSQL_ROOT_PASSWORD=rootpass
       - MYSQL_DATABASE=ledger_link
+      - MYSQL_USER=ledger_user
+      - MYSQL_PASSWORD=ledger_pass
     networks:
       - monitoring-network
     volumes:
       - mysql_data:/var/lib/mysql
     healthcheck:
-      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-p$$MYSQL_ROOT_PASSWORD"]
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-prootpass"]
       interval: 5s
       timeout: 5s
       retries: 5
+      start_period: 30s
+    deploy:
+      resources:
+        limits:
+          cpus: '1'
+          memory: 1G
+    restart: unless-stopped
 
   prometheus:
     build:
@@ -64,29 +95,35 @@ services:
       - "9090:9090"
     networks:
       - monitoring-network
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 512M
     restart: unless-stopped
-    user: nobody
 
   grafana:
     build:
       context: .
       dockerfile: Dockerfile.grafana
     environment:
-      - GF_SECURITY_ADMIN_USER=${GRAFANA_ADMIN_USER:-admin}
-      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD:-admin}
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=admin
       - GF_USERS_ALLOW_SIGN_UP=false
-      - GF_AUTH_ANONYMOUS_ENABLED=true
-      - GF_AUTH_ANONYMOUS_ORG_ROLE=Viewer
-      - GF_INSTALL_PLUGINS=grafana-piechart-panel
     volumes:
-      - grafana-storage:/var/lib/grafana
+      - grafana_data:/var/lib/grafana
     ports:
       - "3000:3000"
     networks:
       - monitoring-network
-    restart: unless-stopped
     depends_on:
       - prometheus
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 512M
+    restart: unless-stopped
 
 networks:
   monitoring-network:
@@ -94,5 +131,6 @@ networks:
 
 volumes:
   mysql_data:
-  grafana-storage:
+  redis_data:
   prometheus_data:
+  grafana_data:

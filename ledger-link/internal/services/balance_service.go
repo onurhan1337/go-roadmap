@@ -85,7 +85,7 @@ func (s *BalanceService) GetBalance(ctx context.Context, userID uint) (*models.B
 				Amount:        0,
 				LastUpdatedAt: time.Now(),
 			}
-			if err := s.repo.Create(ctx, balance); err != nil {
+			if err := s.CreateInitialBalance(ctx, balance); err != nil {
 				balanceOperations.WithLabelValues("get", "failure").Inc()
 				return nil, fmt.Errorf("failed to create initial balance: %w", err)
 			}
@@ -212,6 +212,17 @@ func (s *BalanceService) GetBalanceAtTime(ctx context.Context, userID uint, time
 }
 
 func (s *BalanceService) CreateInitialBalance(ctx context.Context, balance *models.Balance) error {
+	lock := s.getLock(balance.UserID)
+	lock.Lock()
+	defer lock.Unlock()
+
+	_, err := s.repo.GetByUserID(ctx, balance.UserID)
+	if err == nil {
+		return nil
+	} else if err != models.ErrNotFound {
+		return fmt.Errorf("failed to check existing balance: %w", err)
+	}
+
 	if err := s.repo.Create(ctx, balance); err != nil {
 		return fmt.Errorf("failed to create initial balance: %w", err)
 	}
