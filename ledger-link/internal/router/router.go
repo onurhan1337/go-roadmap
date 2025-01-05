@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"ledger-link/internal/handlers"
+	"ledger-link/pkg/auth"
 	"ledger-link/pkg/httputil"
 	"ledger-link/pkg/middleware"
 	"ledger-link/pkg/ratelimit"
@@ -90,6 +91,30 @@ func NewRouter(
 	})
 
 	mux.HandleFunc("/api/v1/auth/refresh", authHandler.RefreshToken)
+
+	mux.HandleFunc("/api/v1/users/me", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+
+		authMiddleware.Authenticate(
+			rbacMiddleware.RequireUser(
+				http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					user, ok := auth.GetUserFromContext(r.Context())
+					if !ok {
+						http.Error(w, "Unauthorized", http.StatusUnauthorized)
+						return
+					}
+
+					ctx := context.WithValue(r.Context(), httputil.PathParamsKey, map[string]string{"id": fmt.Sprint(user.ID)})
+					r = r.WithContext(ctx)
+
+					userHandler.GetUser(w, r)
+				}),
+			),
+		).ServeHTTP(w, r)
+	})
 
 	mux.HandleFunc("/api/v1/users/", func(w http.ResponseWriter, r *http.Request) {
 		id := getIDFromPath(r.URL.Path)

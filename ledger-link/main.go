@@ -55,6 +55,7 @@ func main() {
 	// Wrap router with middleware chain
 	handler := middleware.Chain(
 		router,
+		middleware.CORS(),
 		middleware.MetricsMiddleware,
 		middleware.LoggingMiddleware(log),
 		middleware.RecoveryMiddleware(log),
