@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"ledger-link/internal/models"
+	"ledger-link/pkg/cache"
 	"ledger-link/pkg/logger"
 
 	"github.com/prometheus/client_golang/prometheus"
@@ -45,8 +46,7 @@ type BalanceService struct {
 	repo     models.BalanceRepository
 	auditSvc models.AuditService
 	logger   *logger.Logger
-	cacheMu  sync.RWMutex
-	cache    map[uint]*models.Balance
+	cache    *cache.CacheService
 	locks    sync.Map
 }
 
@@ -54,12 +54,13 @@ func NewBalanceService(
 	repo models.BalanceRepository,
 	auditSvc models.AuditService,
 	logger *logger.Logger,
+	cache *cache.CacheService,
 ) *BalanceService {
 	return &BalanceService{
 		repo:     repo,
 		auditSvc: auditSvc,
 		logger:   logger,
-		cache:    make(map[uint]*models.Balance),
+		cache:    cache,
 	}
 }
 
@@ -67,14 +68,14 @@ func (s *BalanceService) GetBalance(ctx context.Context, userID uint) (*models.B
 	timer := prometheus.NewTimer(balanceUpdateDuration.WithLabelValues("get"))
 	defer timer.ObserveDuration()
 
-	s.cacheMu.RLock()
-	if balance, ok := s.cache[userID]; ok {
-		s.cacheMu.RUnlock()
-		balanceOperations.WithLabelValues("get", "success").Inc()
+	cacheKey := cache.BuildKey(cache.KeyBalance, userID)
+	var balance *models.Balance
+
+	if err := s.cache.Get(ctx, cacheKey, &balance); err == nil {
+		balanceOperations.WithLabelValues("get", "cache_hit").Inc()
 		balanceDistribution.WithLabelValues("current").Observe(balance.SafeAmount())
 		return balance, nil
 	}
-	s.cacheMu.RUnlock()
 
 	balance, err := s.repo.GetByUserID(ctx, userID)
 	if err != nil {
@@ -94,11 +95,11 @@ func (s *BalanceService) GetBalance(ctx context.Context, userID uint) (*models.B
 		}
 	}
 
-	s.cacheMu.Lock()
-	s.cache[userID] = balance
-	s.cacheMu.Unlock()
+	if err := s.cache.Set(ctx, cacheKey, balance, cache.ShortTerm); err != nil {
+		s.logger.Error("failed to cache balance", "error", err)
+	}
 
-	balanceOperations.WithLabelValues("get", "success").Inc()
+	balanceOperations.WithLabelValues("get", "db_hit").Inc()
 	balanceDistribution.WithLabelValues("current").Observe(balance.SafeAmount())
 	return balance, nil
 }
@@ -133,6 +134,11 @@ func (s *BalanceService) UpdateBalance(ctx context.Context, userID uint, amount 
 		return fmt.Errorf("failed to update balance: %w", err)
 	}
 
+	cacheKey := fmt.Sprintf("balance:%d", userID)
+	if err := s.cache.Delete(ctx, cacheKey); err != nil {
+		s.logger.Error("failed to invalidate balance cache", "error", err)
+	}
+
 	balanceOperations.WithLabelValues("update", "success").Inc()
 	balanceDistribution.WithLabelValues("current").Observe(newAmount)
 
@@ -150,10 +156,6 @@ func (s *BalanceService) UpdateBalance(ctx context.Context, userID uint, amount 
 	if err := s.auditSvc.LogAction(ctx, models.EntityTypeBalance, userID, models.ActionUpdate, details); err != nil {
 		s.logger.Error("failed to log balance update", "error", err)
 	}
-
-	s.cacheMu.Lock()
-	s.cache[userID] = balance
-	s.cacheMu.Unlock()
 
 	return nil
 }
@@ -178,12 +180,6 @@ func (s *BalanceService) createBalanceHistory(ctx context.Context, history *mode
 func (s *BalanceService) getLock(userID uint) *sync.Mutex {
 	lock, _ := s.locks.LoadOrStore(userID, &sync.Mutex{})
 	return lock.(*sync.Mutex)
-}
-
-func (s *BalanceService) InvalidateCache(userID uint) {
-	s.cacheMu.Lock()
-	delete(s.cache, userID)
-	s.cacheMu.Unlock()
 }
 
 func (s *BalanceService) GetBalanceAtTime(ctx context.Context, userID uint, timestamp time.Time) (*models.Balance, error) {

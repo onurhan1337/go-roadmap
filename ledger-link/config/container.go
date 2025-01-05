@@ -57,7 +57,7 @@ func NewServiceContainer(db *gorm.DB, logger *logger.Logger, cfg *Config) (*Serv
 
 	// Initialize services
 	auditSvc := services.NewAuditService(auditRepo, logger)
-	balanceSvc := services.NewBalanceService(balanceRepo, auditSvc, logger)
+	balanceSvc := services.NewBalanceService(balanceRepo, auditSvc, logger, cacheService)
 	userSvc := services.NewUserService(userRepo, balanceSvc, auditSvc, logger)
 	authSvc := services.NewAuthService(userSvc, tokenMaker, logger)
 	transactionSvc := services.NewTransactionService(transactionRepo, balanceSvc, auditSvc, logger)
