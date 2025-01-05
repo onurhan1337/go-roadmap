@@ -7,6 +7,8 @@ import (
 
 	"ledger-link/config"
 	"ledger-link/pkg/logger"
+
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
 type Server struct {
@@ -38,4 +40,9 @@ func (s *Server) Stop(ctx context.Context) error {
 
 func (s *Server) Use(middleware func(http.Handler) http.Handler) {
 	s.server.Handler = middleware(s.server.Handler)
+}
+
+func (s *Server) setupRoutes() {
+	// Add metrics endpoint
+	s.server.Handler = promhttp.Handler()
 }

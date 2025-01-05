@@ -10,6 +10,17 @@ import (
 	"ledger-link/pkg/auth"
 	"ledger-link/pkg/httputil"
 	"ledger-link/pkg/logger"
+
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promauto"
+)
+
+var userErrors = promauto.NewCounterVec(
+	prometheus.CounterOpts{
+		Name: "ledger_user_handler_errors_total",
+		Help: "Total number of errors in user handler",
+	},
+	[]string{"operation", "error_type"},
 )
 
 type UserHandler struct {
@@ -59,6 +70,7 @@ func (h *UserHandler) GetUser(w http.ResponseWriter, r *http.Request) {
 	idStr := httputil.GetPathParam(r.Context(), "id")
 	id, err := strconv.ParseUint(idStr, 10, 32)
 	if err != nil {
+		userErrors.WithLabelValues("get", "invalid_id").Inc()
 		http.Error(w, "Invalid user ID", http.StatusBadRequest)
 		return
 	}
@@ -66,9 +78,11 @@ func (h *UserHandler) GetUser(w http.ResponseWriter, r *http.Request) {
 	user, err := h.userSvc.GetByID(r.Context(), uint(id))
 	if err != nil {
 		if err == models.ErrNotFound {
+			userErrors.WithLabelValues("get", "not_found").Inc()
 			http.Error(w, "User not found", http.StatusNotFound)
 			return
 		}
+		userErrors.WithLabelValues("get", "internal_error").Inc()
 		h.logger.Error("failed to get user", "error", err)
 		http.Error(w, "Failed to get user", http.StatusInternalServerError)
 		return

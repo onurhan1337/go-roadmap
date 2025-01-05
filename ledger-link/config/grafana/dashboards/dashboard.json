@@ -1,0 +1,148 @@
+{
+  "annotations": {
+    "list": []
+  },
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 0,
+  "links": [],
+  "liveNow": false,
+  "panels": [
+    {
+      "title": "Transaction Metrics",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+      "id": 1,
+      "type": "timeseries",
+      "targets": [
+        {
+          "expr": "rate(ledger_transactions_total[5m])",
+          "legendFormat": "{{type}} - {{status}}"
+        }
+      ]
+    },
+    {
+      "title": "Authentication Metrics",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+      "id": 2,
+      "type": "timeseries",
+      "targets": [
+        {
+          "expr": "rate(ledger_auth_attempts_total[5m])",
+          "legendFormat": "{{method}} - {{status}}"
+        }
+      ]
+    },
+    {
+      "title": "Active Users",
+      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 8 },
+      "id": 3,
+      "type": "gauge",
+      "targets": [
+        {
+          "expr": "ledger_active_sessions"
+        }
+      ]
+    },
+    {
+      "title": "User Operations",
+      "gridPos": { "h": 8, "w": 8, "x": 8, "y": 8 },
+      "id": 4,
+      "type": "timeseries",
+      "targets": [
+        {
+          "expr": "rate(ledger_user_operations_total[5m])",
+          "legendFormat": "{{operation}} - {{status}}"
+        }
+      ]
+    },
+    {
+      "title": "Error Rates",
+      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 8 },
+      "id": 5,
+      "type": "timeseries",
+      "targets": [
+        {
+          "expr": "sum(rate(ledger_transaction_errors_total[5m])) by (type, error)",
+          "legendFormat": "Transactions - {{type}} - {{error}}"
+        },
+        {
+          "expr": "sum(rate(ledger_auth_errors_total[5m])) by (operation, error_type)",
+          "legendFormat": "Auth - {{operation}} - {{error_type}}"
+        },
+        {
+          "expr": "sum(rate(ledger_user_errors_total[5m])) by (operation, error_type)",
+          "legendFormat": "Users - {{operation}} - {{error_type}}"
+        }
+      ]
+    },
+    {
+      "title": "Operation Latencies",
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 16 },
+      "id": 6,
+      "type": "timeseries",
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, sum(rate(ledger_transaction_duration_seconds_bucket[5m])) by (le, type))",
+          "legendFormat": "Transactions - {{type}}"
+        },
+        {
+          "expr": "histogram_quantile(0.95, sum(rate(ledger_auth_duration_seconds_bucket[5m])) by (le, operation))",
+          "legendFormat": "Auth - {{operation}}"
+        },
+        {
+          "expr": "histogram_quantile(0.95, sum(rate(ledger_user_operation_duration_seconds_bucket[5m])) by (le, operation))",
+          "legendFormat": "Users - {{operation}}"
+        }
+      ]
+    },
+    {
+      "title": "Balance Operations",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 24 },
+      "id": 7,
+      "type": "timeseries",
+      "targets": [
+        {
+          "expr": "rate(ledger_balance_operations_total[5m])",
+          "legendFormat": "{{operation}} - {{status}}"
+        }
+      ]
+    },
+    {
+      "title": "Balance Distribution",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 24 },
+      "id": 8,
+      "type": "heatmap",
+      "targets": [
+        {
+          "expr": "rate(ledger_balance_distribution_bucket[5m])",
+          "legendFormat": "{{type}}"
+        }
+      ]
+    },
+    {
+      "title": "Balance Update Latency",
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 32 },
+      "id": 9,
+      "type": "timeseries",
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, sum(rate(ledger_balance_update_duration_seconds_bucket[5m])) by (le, operation))",
+          "legendFormat": "{{operation}}"
+        }
+      ]
+    }
+  ],
+  "refresh": "5s",
+  "schemaVersion": 38,
+  "style": "dark",
+  "tags": ["ledger-link"],
+  "templating": {
+    "list": []
+  },
+  "time": {
+    "from": "now-6h",
+    "to": "now"
+  },
+  "title": "Ledger Link Dashboard",
+  "version": 0
+} 

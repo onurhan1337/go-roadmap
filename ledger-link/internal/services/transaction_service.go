@@ -8,14 +8,69 @@ import (
 	"ledger-link/internal/processor"
 	"ledger-link/pkg/auth"
 	"ledger-link/pkg/logger"
+
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promauto"
+)
+
+var (
+	transactionCounter = promauto.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "ledger_transactions_total",
+			Help: "The total number of processed transactions by type",
+		},
+		[]string{"type", "status"},
+	)
+
+	transactionDuration = promauto.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Name:    "ledger_transaction_duration_seconds",
+			Help:    "Transaction processing duration in seconds",
+			Buckets: prometheus.DefBuckets,
+		},
+		[]string{"type"},
+	)
+
+	balanceGauge = promauto.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "ledger_user_balance",
+			Help: "Current balance for users",
+		},
+		[]string{"user_id"},
+	)
+
+	transactionAmount = promauto.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Name:    "ledger_transaction_amount",
+			Help:    "Distribution of transaction amounts",
+			Buckets: []float64{1, 10, 50, 100, 500, 1000, 5000, 10000},
+		},
+		[]string{"type"},
+	)
+
+	transactionErrors = promauto.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "ledger_transaction_errors_total",
+			Help: "Total number of transaction errors by type and error kind",
+		},
+		[]string{"type", "error"},
+	)
+
+	activeTransactions = promauto.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "ledger_active_transactions",
+			Help: "Number of currently processing transactions",
+		},
+		[]string{"type"},
+	)
 )
 
 type TransactionService struct {
-	repo        models.TransactionRepository
-	processor   *processor.TransactionProcessor
-	balanceSvc  models.BalanceService
-	auditSvc    models.AuditService
-	logger      *logger.Logger
+	repo       models.TransactionRepository
+	processor  *processor.TransactionProcessor
+	balanceSvc models.BalanceService
+	auditSvc   models.AuditService
+	logger     *logger.Logger
 }
 
 func NewTransactionService(
@@ -34,17 +89,21 @@ func NewTransactionService(
 }
 
 func (s *TransactionService) Credit(ctx context.Context, userID uint, amount float64, notes string) error {
+	timer := prometheus.NewTimer(transactionDuration.WithLabelValues("credit"))
+	defer timer.ObserveDuration()
+
 	if amount <= 0 {
+		transactionErrors.WithLabelValues("credit", "invalid_amount").Inc()
 		return models.ErrInvalidAmount
 	}
 
 	tx := &models.Transaction{
 		ToUserID:   userID,
-			FromUserID: userID,
-			Amount:     amount,
-			Type:       models.TypeDeposit,
-			Status:     models.StatusPending,
-			Notes:      notes,
+		FromUserID: userID,
+		Amount:     amount,
+		Type:       models.TypeDeposit,
+		Status:     models.StatusPending,
+		Notes:      notes,
 	}
 
 	if err := tx.Validate(); err != nil {
@@ -90,10 +149,16 @@ func (s *TransactionService) Credit(ctx context.Context, userID uint, amount flo
 		s.logger.Error("failed to log credit audit", "error", err)
 	}
 
+	transactionCounter.WithLabelValues("credit", "success").Inc()
+	balanceGauge.WithLabelValues(fmt.Sprintf("%d", userID)).Set(balance.SafeAmount())
+
 	return nil
 }
 
 func (s *TransactionService) Debit(ctx context.Context, userID uint, amount float64, notes string) error {
+	timer := prometheus.NewTimer(transactionDuration.WithLabelValues("debit"))
+	defer timer.ObserveDuration()
+
 	if amount <= 0 {
 		return models.ErrInvalidAmount
 	}
@@ -154,15 +219,26 @@ func (s *TransactionService) Debit(ctx context.Context, userID uint, amount floa
 		s.logger.Error("failed to log debit audit", "error", err)
 	}
 
+	transactionCounter.WithLabelValues("debit", "success").Inc()
+	balanceGauge.WithLabelValues(fmt.Sprintf("%d", userID)).Set(balance.SafeAmount())
+
 	return nil
 }
 
 func (s *TransactionService) Transfer(ctx context.Context, fromUserID, toUserID uint, amount float64, notes string) error {
+	timer := prometheus.NewTimer(transactionDuration.WithLabelValues("transfer"))
+	defer timer.ObserveDuration()
+
+	activeTransactions.WithLabelValues("transfer").Inc()
+	defer activeTransactions.WithLabelValues("transfer").Dec()
+
 	if amount <= 0 {
+		transactionErrors.WithLabelValues("transfer", "invalid_amount").Inc()
 		return models.ErrInvalidAmount
 	}
 
 	if fromUserID == toUserID {
+		transactionErrors.WithLabelValues("transfer", "same_account").Inc()
 		return fmt.Errorf("cannot transfer to the same account")
 	}
 
@@ -176,10 +252,20 @@ func (s *TransactionService) Transfer(ctx context.Context, fromUserID, toUserID 
 	}
 
 	if err := tx.Validate(); err != nil {
+		transactionErrors.WithLabelValues("transfer", "validation").Inc()
 		return fmt.Errorf("invalid transaction: %w", err)
 	}
 
-	return s.SubmitTransaction(ctx, tx)
+	transactionAmount.WithLabelValues("transfer").Observe(amount)
+
+	err := s.SubmitTransaction(ctx, tx)
+	if err != nil {
+		transactionErrors.WithLabelValues("transfer", "processing").Inc()
+		return err
+	}
+
+	transactionCounter.WithLabelValues("transfer", "success").Inc()
+	return nil
 }
 
 func (s *TransactionService) CreateTransaction(ctx context.Context, tx *models.Transaction) error {
@@ -191,7 +277,11 @@ func (s *TransactionService) CreateTransaction(ctx context.Context, tx *models.T
 }
 
 func (s *TransactionService) ProcessTransaction(ctx context.Context, tx *models.Transaction) error {
-	return s.repo.Update(ctx, tx)
+	if err := s.repo.Update(ctx, tx); err != nil {
+		transactionErrors.WithLabelValues(string(tx.Type), "processing_failed").Inc()
+		return err
+	}
+	return nil
 }
 
 func (s *TransactionService) GetUserTransactions(ctx context.Context, userID uint) ([]models.Transaction, error) {
@@ -199,7 +289,11 @@ func (s *TransactionService) GetUserTransactions(ctx context.Context, userID uin
 }
 
 func (s *TransactionService) SubmitTransaction(ctx context.Context, tx *models.Transaction) error {
+	activeTransactions.WithLabelValues(string(tx.Type)).Inc()
+	defer activeTransactions.WithLabelValues(string(tx.Type)).Dec()
+
 	if err := s.CreateTransaction(ctx, tx); err != nil {
+		transactionErrors.WithLabelValues(string(tx.Type), "creation").Inc()
 		return err
 	}
 
@@ -207,10 +301,13 @@ func (s *TransactionService) SubmitTransaction(ctx context.Context, tx *models.T
 		tx.Status = models.StatusFailed
 		if updateErr := s.ProcessTransaction(ctx, tx); updateErr != nil {
 			s.logger.Error("failed to update failed transaction", "error", updateErr)
+			transactionErrors.WithLabelValues(string(tx.Type), "status_update").Inc()
 		}
+		transactionErrors.WithLabelValues(string(tx.Type), "processing").Inc()
 		return fmt.Errorf("failed to process transaction: %w", err)
 	}
 
+	transactionCounter.WithLabelValues(string(tx.Type), "success").Inc()
 	return nil
 }
 
