@@ -4,13 +4,14 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promauto"
+	"github.com/shopspring/decimal"
+
 	"ledger-link/internal/models"
 	"ledger-link/internal/processor"
 	"ledger-link/pkg/auth"
 	"ledger-link/pkg/logger"
-
-	"github.com/prometheus/client_golang/prometheus"
-	"github.com/prometheus/client_golang/prometheus/promauto"
 )
 
 var (
@@ -88,11 +89,11 @@ func NewTransactionService(
 	}
 }
 
-func (s *TransactionService) Credit(ctx context.Context, userID uint, amount float64, notes string) error {
+func (s *TransactionService) Credit(ctx context.Context, userID uint, amount decimal.Decimal, notes string) error {
 	timer := prometheus.NewTimer(transactionDuration.WithLabelValues("credit"))
 	defer timer.ObserveDuration()
 
-	if amount <= 0 {
+	if amount.IsNegative() || amount.IsZero() {
 		transactionErrors.WithLabelValues("credit", "invalid_amount").Inc()
 		return models.ErrInvalidAmount
 	}
@@ -144,22 +145,22 @@ func (s *TransactionService) Credit(ctx context.Context, userID uint, amount flo
 		return fmt.Errorf("failed to update transaction status: %w", err)
 	}
 
-	details := fmt.Sprintf("Credit transaction %d completed: %f credited to user %d", tx.ID, amount, userID)
+	details := fmt.Sprintf("Credit transaction %d completed: %s credited to user %d", tx.ID, amount, userID)
 	if err := s.auditSvc.LogAction(ctx, models.EntityTypeTransaction, tx.ID, "credit", details); err != nil {
 		s.logger.Error("failed to log credit audit", "error", err)
 	}
 
 	transactionCounter.WithLabelValues("credit", "success").Inc()
-	balanceGauge.WithLabelValues(fmt.Sprintf("%d", userID)).Set(balance.SafeAmount())
+	balanceGauge.WithLabelValues(fmt.Sprintf("%d", userID)).Set(balance.SafeAmount().InexactFloat64())
 
 	return nil
 }
 
-func (s *TransactionService) Debit(ctx context.Context, userID uint, amount float64, notes string) error {
+func (s *TransactionService) Debit(ctx context.Context, userID uint, amount decimal.Decimal, notes string) error {
 	timer := prometheus.NewTimer(transactionDuration.WithLabelValues("debit"))
 	defer timer.ObserveDuration()
 
-	if amount <= 0 {
+	if amount.IsNegative() || amount.IsZero() {
 		return models.ErrInvalidAmount
 	}
 
@@ -181,7 +182,7 @@ func (s *TransactionService) Debit(ctx context.Context, userID uint, amount floa
 		return fmt.Errorf("failed to get balance: %w", err)
 	}
 
-	if balance.SafeAmount() < amount {
+	if balance.SafeAmount().LessThan(amount) {
 		return fmt.Errorf("insufficient funds")
 	}
 
@@ -214,32 +215,23 @@ func (s *TransactionService) Debit(ctx context.Context, userID uint, amount floa
 		return fmt.Errorf("failed to update transaction status: %w", err)
 	}
 
-	details := fmt.Sprintf("Debit transaction %d completed: %f debited from user %d", tx.ID, amount, userID)
+	details := fmt.Sprintf("Debit transaction %d completed: %s debited from user %d", tx.ID, amount, userID)
 	if err := s.auditSvc.LogAction(ctx, models.EntityTypeTransaction, tx.ID, "debit", details); err != nil {
 		s.logger.Error("failed to log debit audit", "error", err)
 	}
 
 	transactionCounter.WithLabelValues("debit", "success").Inc()
-	balanceGauge.WithLabelValues(fmt.Sprintf("%d", userID)).Set(balance.SafeAmount())
+	balanceGauge.WithLabelValues(fmt.Sprintf("%d", userID)).Set(balance.SafeAmount().InexactFloat64())
 
 	return nil
 }
 
-func (s *TransactionService) Transfer(ctx context.Context, fromUserID, toUserID uint, amount float64, notes string) error {
+func (s *TransactionService) Transfer(ctx context.Context, fromUserID, toUserID uint, amount decimal.Decimal, notes string) error {
 	timer := prometheus.NewTimer(transactionDuration.WithLabelValues("transfer"))
 	defer timer.ObserveDuration()
 
-	activeTransactions.WithLabelValues("transfer").Inc()
-	defer activeTransactions.WithLabelValues("transfer").Dec()
-
-	if amount <= 0 {
-		transactionErrors.WithLabelValues("transfer", "invalid_amount").Inc()
+	if amount.IsNegative() || amount.IsZero() {
 		return models.ErrInvalidAmount
-	}
-
-	if fromUserID == toUserID {
-		transactionErrors.WithLabelValues("transfer", "same_account").Inc()
-		return fmt.Errorf("cannot transfer to the same account")
 	}
 
 	tx := &models.Transaction{
@@ -252,19 +244,40 @@ func (s *TransactionService) Transfer(ctx context.Context, fromUserID, toUserID 
 	}
 
 	if err := tx.Validate(); err != nil {
-		transactionErrors.WithLabelValues("transfer", "validation").Inc()
 		return fmt.Errorf("invalid transaction: %w", err)
 	}
 
-	transactionAmount.WithLabelValues("transfer").Observe(amount)
-
-	err := s.SubmitTransaction(ctx, tx)
-	if err != nil {
-		transactionErrors.WithLabelValues("transfer", "processing").Inc()
-		return err
+	// Create the transaction first
+	if err := s.repo.Create(ctx, tx); err != nil {
+		transactionErrors.WithLabelValues("transfer", "creation").Inc()
+		return fmt.Errorf("failed to create transaction: %w", err)
 	}
 
+	// Use the processor to handle the transfer
+	if err := s.processor.ProcessTransaction(ctx, tx); err != nil {
+		tx.Status = models.StatusFailed
+		if updateErr := s.repo.Update(ctx, tx); updateErr != nil {
+			s.logger.Error("failed to update failed transaction status", "error", updateErr)
+		}
+		transactionErrors.WithLabelValues("transfer", "processing").Inc()
+		return fmt.Errorf("failed to process transfer: %w", err)
+	}
+
+	// Update transaction status to completed
+	tx.Status = models.StatusCompleted
+	if err := s.repo.Update(ctx, tx); err != nil {
+		s.logger.Error("failed to update completed transaction status", "error", err)
+	}
+
+	s.logger.Info("Transfer completed successfully",
+		"transaction_id", tx.ID,
+		"from_user", fromUserID,
+		"to_user", toUserID,
+		"amount", amount)
+
 	transactionCounter.WithLabelValues("transfer", "success").Inc()
+	transactionAmount.WithLabelValues("transfer").Observe(amount.InexactFloat64())
+
 	return nil
 }
 

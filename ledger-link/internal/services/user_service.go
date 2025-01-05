@@ -12,6 +12,7 @@ import (
 
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
+	"github.com/shopspring/decimal"
 )
 
 var (
@@ -95,7 +96,7 @@ func (s *UserService) Create(ctx context.Context, user *models.User) error {
 
 	initialBalance := &models.Balance{
 		UserID:        user.ID,
-		Amount:        0,
+		Amount:        decimal.NewFromInt(0),
 		LastUpdatedAt: time.Now(),
 		CreatedAt:     time.Now(),
 		UpdatedAt:     time.Now(),

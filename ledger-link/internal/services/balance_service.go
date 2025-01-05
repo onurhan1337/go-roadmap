@@ -12,6 +12,7 @@ import (
 
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
+	"github.com/shopspring/decimal"
 )
 
 var (
@@ -71,18 +72,30 @@ func (s *BalanceService) GetBalance(ctx context.Context, userID uint) (*models.B
 	cacheKey := cache.BuildKey(cache.KeyBalance, userID)
 	var balance *models.Balance
 
-	if err := s.cache.Get(ctx, cacheKey, &balance); err == nil {
-		balanceOperations.WithLabelValues("get", "cache_hit").Inc()
-		balanceDistribution.WithLabelValues("current").Observe(balance.SafeAmount())
-		return balance, nil
+	s.logger.Debug("Attempting to get balance from cache", "user_id", userID)
+	if err := s.cache.Get(ctx, cacheKey, &balance); err == nil && balance != nil {
+		if time.Since(balance.LastUpdatedAt) <= 5*time.Minute {
+			s.logger.Debug("Got balance from cache",
+				"user_id", userID,
+				"amount", balance.SafeAmount(),
+				"last_updated", balance.LastUpdatedAt)
+			balanceOperations.WithLabelValues("get", "cache_hit").Inc()
+			balanceDistribution.WithLabelValues("current").Observe(balance.SafeAmount().InexactFloat64())
+			return balance, nil
+		}
+		s.logger.Debug("Cache entry expired",
+			"user_id", userID,
+			"last_updated", balance.LastUpdatedAt)
 	}
 
+	s.logger.Debug("Getting balance from database", "user_id", userID)
 	balance, err := s.repo.GetByUserID(ctx, userID)
 	if err != nil {
 		if err == models.ErrNotFound {
+			s.logger.Info("Creating initial balance for user", "user_id", userID)
 			balance = &models.Balance{
 				UserID:        userID,
-				Amount:        0,
+				Amount:        decimal.NewFromInt(0),
 				LastUpdatedAt: time.Now(),
 			}
 			if err := s.CreateInitialBalance(ctx, balance); err != nil {
@@ -95,16 +108,20 @@ func (s *BalanceService) GetBalance(ctx context.Context, userID uint) (*models.B
 		}
 	}
 
-	if err := s.cache.Set(ctx, cacheKey, balance, cache.ShortTerm); err != nil {
-		s.logger.Error("failed to cache balance", "error", err)
+	s.logger.Debug("Setting balance in cache",
+		"user_id", userID,
+		"amount", balance.SafeAmount(),
+		"last_updated", balance.LastUpdatedAt)
+	if err := s.cache.Set(ctx, cacheKey, balance, 5*time.Minute); err != nil {
+		s.logger.Error("Failed to cache balance", "error", err)
 	}
 
 	balanceOperations.WithLabelValues("get", "db_hit").Inc()
-	balanceDistribution.WithLabelValues("current").Observe(balance.SafeAmount())
+	balanceDistribution.WithLabelValues("current").Observe(balance.SafeAmount().InexactFloat64())
 	return balance, nil
 }
 
-func (s *BalanceService) UpdateBalance(ctx context.Context, userID uint, amount float64) error {
+func (s *BalanceService) UpdateBalance(ctx context.Context, userID uint, amount decimal.Decimal) error {
 	timer := prometheus.NewTimer(balanceUpdateDuration.WithLabelValues("update"))
 	defer timer.ObserveDuration()
 
@@ -112,7 +129,20 @@ func (s *BalanceService) UpdateBalance(ctx context.Context, userID uint, amount 
 	lock.Lock()
 	defer lock.Unlock()
 
-	balance, err := s.GetBalance(ctx, userID)
+	s.logger.Info("Starting balance update",
+		"user_id", userID,
+		"new_amount", amount)
+
+	// Always invalidate cache on write operations
+	cacheKey := cache.BuildKey(cache.KeyBalance, userID)
+	if err := s.cache.Delete(ctx, cacheKey); err != nil {
+		s.logger.Error("Failed to invalidate balance cache", "error", err)
+	} else {
+		s.logger.Debug("Successfully invalidated cache", "user_id", userID)
+	}
+
+	s.logger.Debug("Getting current balance from database", "user_id", userID)
+	balance, err := s.repo.GetByUserID(ctx, userID)
 	if err != nil {
 		balanceOperations.WithLabelValues("update", "failure").Inc()
 		return err
@@ -121,26 +151,40 @@ func (s *BalanceService) UpdateBalance(ctx context.Context, userID uint, amount 
 	oldAmount := balance.SafeAmount()
 	newAmount := amount
 
-	if newAmount < 0 {
+	if newAmount.IsNegative() {
+		s.logger.Error("Attempted negative balance update",
+			"user_id", userID,
+			"amount", newAmount)
 		balanceOperations.WithLabelValues("update", "failure").Inc()
 		return fmt.Errorf("balance cannot be negative")
 	}
 
+	s.logger.Info("Updating balance",
+		"user_id", userID,
+		"old_amount", oldAmount,
+		"new_amount", newAmount)
+
 	balance.UpdateAmount(newAmount)
+	balance.LastUpdatedAt = time.Now()
 
 	if err := s.repo.Update(ctx, balance); err != nil {
+		s.logger.Error("Failed to update balance in database",
+			"error", err,
+			"user_id", userID,
+			"old_amount", oldAmount,
+			"new_amount", newAmount)
 		balance.UpdateAmount(oldAmount)
 		balanceOperations.WithLabelValues("update", "failure").Inc()
 		return fmt.Errorf("failed to update balance: %w", err)
 	}
 
-	cacheKey := fmt.Sprintf("balance:%d", userID)
-	if err := s.cache.Delete(ctx, cacheKey); err != nil {
-		s.logger.Error("failed to invalidate balance cache", "error", err)
-	}
+	s.logger.Info("Successfully updated balance in database",
+		"user_id", userID,
+		"old_amount", oldAmount,
+		"new_amount", newAmount)
 
 	balanceOperations.WithLabelValues("update", "success").Inc()
-	balanceDistribution.WithLabelValues("current").Observe(newAmount)
+	balanceDistribution.WithLabelValues("current").Observe(balance.SafeAmount().InexactFloat64())
 
 	history := &models.BalanceHistory{
 		UserID:    userID,
@@ -149,12 +193,12 @@ func (s *BalanceService) UpdateBalance(ctx context.Context, userID uint, amount 
 		CreatedAt: time.Now(),
 	}
 	if err := s.createBalanceHistory(ctx, history); err != nil {
-		s.logger.Error("failed to create balance history", "error", err)
+		s.logger.Error("Failed to create balance history", "error", err)
 	}
 
-	details := fmt.Sprintf("Balance updated from %.2f to %.2f", oldAmount, newAmount)
+	details := fmt.Sprintf("Balance updated from %s to %s", oldAmount, newAmount)
 	if err := s.auditSvc.LogAction(ctx, models.EntityTypeBalance, userID, models.ActionUpdate, details); err != nil {
-		s.logger.Error("failed to log balance update", "error", err)
+		s.logger.Error("Failed to log balance update", "error", err)
 	}
 
 	return nil
@@ -232,7 +276,7 @@ func (s *BalanceService) CreateInitialBalance(ctx context.Context, balance *mode
 		s.logger.Error("failed to cache initial balance", "error", err)
 	}
 
-	details := fmt.Sprintf("Initial balance created with amount %.2f", balance.Amount)
+	details := fmt.Sprintf("Initial balance created with amount %s", balance.Amount)
 	if err := s.auditSvc.LogAction(ctx, models.EntityTypeBalance, balance.UserID, models.ActionCreate, details); err != nil {
 		s.logger.Error("failed to log initial balance creation", "error", err)
 	}

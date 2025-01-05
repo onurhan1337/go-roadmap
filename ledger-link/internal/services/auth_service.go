@@ -12,6 +12,7 @@ import (
 
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
+	"github.com/shopspring/decimal"
 )
 
 const (
@@ -158,7 +159,7 @@ func (s *AuthService) Register(ctx context.Context, email, password, username st
 	// Create initial balance for the user
 	balance := &models.Balance{
 		UserID:        user.ID,
-		Amount:        0,
+		Amount:        decimal.NewFromInt(0),
 		LastUpdatedAt: time.Now(),
 	}
 
@@ -185,6 +186,7 @@ func (s *AuthService) ValidateToken(ctx context.Context, token string) (*models.
 
 	s.logger.Info("Token claims", "user_id", claims.UserID, "role", claims.Role)
 
+	// Get user with balance preloaded
 	user, err := s.userSvc.GetByID(ctx, claims.UserID)
 	if err != nil {
 		s.logger.Error("Failed to get user", "error", err)
@@ -195,6 +197,22 @@ func (s *AuthService) ValidateToken(ctx context.Context, token string) (*models.
 	if user.Role != claims.Role {
 		s.logger.Error("Role mismatch", "token_role", claims.Role, "user_role", user.Role)
 		user.Role = claims.Role // Use role from token as it's more up to date
+	}
+
+	// Ensure balance is loaded
+	if user.Balance.UserID == 0 {
+		balance, err := s.balanceSvc.GetBalance(ctx, user.ID)
+		if err != nil {
+			s.logger.Error("Failed to get user balance", "error", err)
+			return nil, err
+		}
+		user.Balance = models.Balance{
+			UserID:        balance.UserID,
+			Amount:        balance.Amount,
+			LastUpdatedAt: balance.LastUpdatedAt,
+			UpdatedAt:     balance.UpdatedAt,
+			CreatedAt:     balance.CreatedAt,
+		}
 	}
 
 	userJSON, _ := json.Marshal(user)

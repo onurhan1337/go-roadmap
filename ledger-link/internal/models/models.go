@@ -3,27 +3,25 @@ package models
 import (
 	"encoding/json"
 	"errors"
-	"fmt"
 	"net/mail"
 	"regexp"
-	"strconv"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"time"
 
+	"github.com/shopspring/decimal"
 	"golang.org/x/crypto/bcrypt"
 	"gorm.io/gorm"
 )
 
 var (
-	ErrInvalidEmail    = errors.New("invalid email format")
-	ErrInvalidUsername = errors.New("username must be between 3 and 30 characters")
-	ErrInvalidPassword = errors.New("password must be at least 8 characters")
-	ErrInvalidAmount   = errors.New("amount must be greater than 0")
-	ErrInvalidStatus   = errors.New("invalid transaction status")
-	ErrInvalidType     = errors.New("invalid transaction type")
-	ErrInvalidRole     = errors.New("invalid user role")
+	ErrInvalidEmail       = errors.New("invalid email format")
+	ErrInvalidUsername    = errors.New("username must be between 3 and 30 characters")
+	ErrInvalidPassword    = errors.New("password must be at least 8 characters")
+	ErrInvalidAmount      = errors.New("amount must be greater than 0")
+	ErrInvalidStatus      = errors.New("invalid transaction status")
+	ErrInvalidType        = errors.New("invalid transaction type")
+	ErrInvalidRole        = errors.New("invalid user role")
 	ErrEmailAlreadyExists = errors.New("email already exists")
 )
 
@@ -36,10 +34,10 @@ const (
 	StatusFailed    TransactionStatus = "failed"
 	StatusCancelled TransactionStatus = "cancelled"
 
-	TypeTransfer    TransactionType = "transfer"
-	TypeDeposit     TransactionType = "deposit"
-	TypeWithdrawal  TransactionType = "withdrawal"
-	TypeAdjustment  TransactionType = "adjustment"
+	TypeTransfer   TransactionType = "transfer"
+	TypeDeposit    TransactionType = "deposit"
+	TypeWithdrawal TransactionType = "withdrawal"
+	TypeAdjustment TransactionType = "adjustment"
 
 	EntityTypeUser        = "user"
 	EntityTypeTransaction = "transaction"
@@ -169,7 +167,7 @@ type Transaction struct {
 	FromUser   User              `gorm:"foreignKey:FromUserID" json:"from_user"`
 	ToUserID   uint              `gorm:"index;not null" json:"to_user_id"`
 	ToUser     User              `gorm:"foreignKey:ToUserID" json:"to_user"`
-	Amount     float64           `gorm:"not null" json:"amount"`
+	Amount     decimal.Decimal   `gorm:"type:decimal(20,8);not null" json:"amount"`
 	Type       TransactionType   `gorm:"not null" json:"type"`
 	Status     TransactionStatus `gorm:"not null" json:"status"`
 	Notes      string            `gorm:"type:text" json:"notes,omitempty"`
@@ -179,7 +177,7 @@ type Transaction struct {
 }
 
 func (t *Transaction) Validate() error {
-	if t.Amount <= 0 {
+	if t.Amount.IsNegative() || t.Amount.IsZero() {
 		return ErrInvalidAmount
 	}
 
@@ -266,18 +264,17 @@ func (t *Transaction) UnmarshalJSON(data []byte) error {
 }
 
 type Balance struct {
-	UserID        uint           `gorm:"primaryKey" json:"user_id"`
-	amount        int64          `gorm:"-" json:"-"`
-	Amount        float64        `gorm:"not null;default:0" json:"amount"`
-	LastUpdatedAt time.Time      `gorm:"not null" json:"last_updated_at"`
-	UpdatedAt     time.Time      `gorm:"not null" json:"updated_at"`
-	CreatedAt     time.Time      `gorm:"not null" json:"created_at"`
-	DeletedAt     gorm.DeletedAt `gorm:"index" json:"-"`
-	mu            sync.RWMutex   `gorm:"-" json:"-"`
+	UserID        uint            `gorm:"primaryKey" json:"user_id"`
+	Amount        decimal.Decimal `gorm:"type:decimal(20,8);not null;default:0" json:"amount"`
+	LastUpdatedAt time.Time       `gorm:"not null" json:"last_updated_at"`
+	UpdatedAt     time.Time       `gorm:"not null" json:"updated_at"`
+	CreatedAt     time.Time       `gorm:"not null" json:"created_at"`
+	DeletedAt     gorm.DeletedAt  `gorm:"index" json:"-"`
+	mu            sync.RWMutex    `gorm:"-" json:"-"`
 }
 
 func (b *Balance) Validate() error {
-	if b.Amount < 0 {
+	if b.Amount.IsNegative() {
 		return errors.New("balance cannot be negative")
 	}
 	if b.UserID == 0 {
@@ -302,64 +299,46 @@ func (b *Balance) BeforeUpdate(tx *gorm.DB) error {
 	return nil
 }
 
-func (b *Balance) AfterFind(tx *gorm.DB) error {
-	atomic.StoreInt64(&b.amount, int64(b.Amount*100))
-	return nil
-}
-
-func (b *Balance) BeforeSave(tx *gorm.DB) error {
-	b.Amount = float64(atomic.LoadInt64(&b.amount)) / 100
-	return nil
-}
-
-func (b *Balance) SafeAmount() float64 {
+func (b *Balance) SafeAmount() decimal.Decimal {
 	b.mu.RLock()
 	defer b.mu.RUnlock()
-	return float64(atomic.LoadInt64(&b.amount)) / 100
+	return b.Amount
 }
 
-func (b *Balance) UpdateAmount(amount float64) {
+func (b *Balance) UpdateAmount(amount decimal.Decimal) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-
-	atomic.StoreInt64(&b.amount, int64(amount*100))
 	b.Amount = amount
 	b.LastUpdatedAt = time.Now()
 }
 
-func (b *Balance) AddAmount(amount float64) error {
-	if amount <= 0 {
+func (b *Balance) AddAmount(amount decimal.Decimal) error {
+	if amount.IsNegative() || amount.IsZero() {
 		return ErrInvalidAmount
 	}
 
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
-	currentAmount := float64(atomic.LoadInt64(&b.amount)) / 100
-	newAmount := currentAmount + amount
-	atomic.StoreInt64(&b.amount, int64(newAmount*100))
-	b.Amount = newAmount
+	b.Amount = b.Amount.Add(amount)
 	b.LastUpdatedAt = time.Now()
 
 	return nil
 }
 
-func (b *Balance) SubtractAmount(amount float64) error {
-	if amount <= 0 {
+func (b *Balance) SubtractAmount(amount decimal.Decimal) error {
+	if amount.IsNegative() || amount.IsZero() {
 		return ErrInvalidAmount
 	}
 
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
-	currentAmount := float64(atomic.LoadInt64(&b.amount)) / 100
-	if currentAmount < amount {
+	if b.Amount.LessThan(amount) {
 		return errors.New("insufficient balance")
 	}
 
-	newAmount := currentAmount - amount
-	atomic.StoreInt64(&b.amount, int64(newAmount*100))
-	b.Amount = newAmount
+	b.Amount = b.Amount.Sub(amount)
 	b.LastUpdatedAt = time.Now()
 
 	return nil
@@ -375,7 +354,7 @@ func (b *Balance) MarshalJSON() ([]byte, error) {
 		UpdatedAt     string `json:"updated_at"`
 	}{
 		Alias:         (*Alias)(b),
-		Amount:        fmt.Sprintf("%.2f", b.SafeAmount()),
+		Amount:        b.SafeAmount().String(),
 		LastUpdatedAt: b.LastUpdatedAt.Format(time.RFC3339),
 		CreatedAt:     b.CreatedAt.Format(time.RFC3339),
 		UpdatedAt:     b.UpdatedAt.Format(time.RFC3339),
@@ -398,7 +377,7 @@ func (b *Balance) UnmarshalJSON(data []byte) error {
 		return err
 	}
 
-	amount, err := strconv.ParseFloat(aux.Amount, 64)
+	amount, err := decimal.NewFromString(aux.Amount)
 	if err != nil {
 		return err
 	}
@@ -425,10 +404,10 @@ func (b *Balance) UnmarshalJSON(data []byte) error {
 type AuditLog struct {
 	ID         uint           `gorm:"primaryKey" json:"id"`
 	EntityType string         `gorm:"index;not null" json:"entity_type"`
-	EntityID   uint          `gorm:"index;not null" json:"entity_id"`
+	EntityID   uint           `gorm:"index;not null" json:"entity_id"`
 	Action     string         `gorm:"not null" json:"action"`
 	Details    string         `gorm:"type:text" json:"details"`
-	UserID     uint          `gorm:"index;not null" json:"user_id"`
+	UserID     uint           `gorm:"index;not null" json:"user_id"`
 	User       User           `gorm:"foreignKey:UserID" json:"user"`
 	CreatedAt  time.Time      `gorm:"not null" json:"created_at"`
 	UpdatedAt  time.Time      `gorm:"not null" json:"updated_at"`

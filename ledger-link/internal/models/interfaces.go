@@ -5,6 +5,8 @@ import (
 	"net/http"
 	"sync"
 	"time"
+
+	"github.com/shopspring/decimal"
 )
 
 type UserRepository interface {
@@ -55,16 +57,16 @@ type TransactionService interface {
 	GetUserTransactions(ctx context.Context, userID uint) ([]Transaction, error)
 	GetTransaction(ctx context.Context, transactionID uint) (*Transaction, error)
 	SubmitTransaction(ctx context.Context, tx *Transaction) error
-	Credit(ctx context.Context, userID uint, amount float64, notes string) error
-	Debit(ctx context.Context, userID uint, amount float64, notes string) error
-	Transfer(ctx context.Context, fromUserID, toUserID uint, amount float64, notes string) error
+	Credit(ctx context.Context, userID uint, amount decimal.Decimal, notes string) error
+	Debit(ctx context.Context, userID uint, amount decimal.Decimal, notes string) error
+	Transfer(ctx context.Context, fromUserID, toUserID uint, amount decimal.Decimal, notes string) error
 	Start(ctx context.Context) error
 	Stop()
 }
 
 type BalanceService interface {
 	GetBalance(ctx context.Context, userID uint) (*Balance, error)
-	UpdateBalance(ctx context.Context, userID uint, amount float64) error
+	UpdateBalance(ctx context.Context, userID uint, amount decimal.Decimal) error
 	LockBalance(ctx context.Context, userID uint) (*sync.Mutex, error)
 	GetBalanceHistory(ctx context.Context, userID uint, limit int) ([]BalanceHistory, error)
 	GetBalanceAtTime(ctx context.Context, userID uint, timestamp time.Time) (*Balance, error)

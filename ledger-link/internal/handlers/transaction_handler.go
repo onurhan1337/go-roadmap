@@ -9,6 +9,8 @@ import (
 	"ledger-link/pkg/auth"
 	"ledger-link/pkg/httputil"
 	"ledger-link/pkg/logger"
+
+	"github.com/shopspring/decimal"
 )
 
 type TransactionHandler struct {
@@ -24,14 +26,14 @@ func NewTransactionHandler(transactionService models.TransactionService, logger 
 }
 
 type TransactionRequest struct {
-	Amount float64 `json:"amount"`
-	Notes  string  `json:"notes"`
+	Amount decimal.Decimal `json:"amount"`
+	Notes  string          `json:"notes"`
 }
 
 type TransferRequest struct {
-	ToUserID uint    `json:"to_user_id"`
-	Amount   float64 `json:"amount"`
-	Notes    string  `json:"notes"`
+	ToUserID uint            `json:"to_user_id"`
+	Amount   decimal.Decimal `json:"amount"`
+	Notes    string          `json:"notes"`
 }
 
 func (h *TransactionHandler) HandleCredit(w http.ResponseWriter, r *http.Request) {

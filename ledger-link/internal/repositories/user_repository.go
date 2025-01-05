@@ -30,7 +30,7 @@ func (r *UserRepository) Create(ctx context.Context, user *models.User) error {
 
 func (r *UserRepository) GetByID(ctx context.Context, id uint) (*models.User, error) {
 	var user models.User
-	if err := r.db.WithContext(ctx).First(&user, id).Error; err != nil {
+	if err := r.db.WithContext(ctx).Preload("Balance").First(&user, id).Error; err != nil {
 		if err == gorm.ErrRecordNotFound {
 			return nil, models.ErrNotFound
 		}
@@ -41,7 +41,7 @@ func (r *UserRepository) GetByID(ctx context.Context, id uint) (*models.User, er
 
 func (r *UserRepository) GetByEmail(ctx context.Context, email string) (*models.User, error) {
 	var user models.User
-	if err := r.db.WithContext(ctx).Where("email = ?", email).First(&user).Error; err != nil {
+	if err := r.db.WithContext(ctx).Preload("Balance").Where("email = ?", email).First(&user).Error; err != nil {
 		if err == gorm.ErrRecordNotFound {
 			return nil, models.ErrNotFound
 		}
@@ -52,7 +52,7 @@ func (r *UserRepository) GetByEmail(ctx context.Context, email string) (*models.
 
 func (r *UserRepository) GetByUsername(ctx context.Context, username string) (*models.User, error) {
 	var user models.User
-	if err := r.db.WithContext(ctx).Where("username = ?", username).First(&user).Error; err != nil {
+	if err := r.db.WithContext(ctx).Preload("Balance").Where("username = ?", username).First(&user).Error; err != nil {
 		if err == gorm.ErrRecordNotFound {
 			return nil, models.ErrNotFound
 		}
@@ -77,7 +77,7 @@ func (r *UserRepository) Delete(ctx context.Context, id uint) error {
 
 func (r *UserRepository) GetUsers(ctx context.Context) ([]*models.User, error) {
 	var users []*models.User
-	result := r.db.WithContext(ctx).Find(&users)
+	result := r.db.WithContext(ctx).Preload("Balance").Find(&users)
 	if result.Error != nil {
 		return nil, fmt.Errorf("failed to get users: %w", result.Error)
 	}
