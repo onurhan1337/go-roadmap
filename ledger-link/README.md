@@ -5,20 +5,24 @@ A robust financial transaction management system built with Go, featuring secure
 ## Features
 
 - User Management with Role-based Access
-- Secure Transaction Processing
-- Real-time Balance Tracking
+- Secure Transaction Processing with Atomic Operations
+- Real-time Balance Tracking with Caching
 - Comprehensive Audit Logging
 - MySQL Database with GORM
+- Redis Caching for Performance
 - Docker Support
 - Monitoring Stack (Prometheus & Grafana)
 - Metrics Collection and Visualization
 - Rate Limiting
 - Request Tracing
+- Transaction History Tracking
+- Balance History
 
 ## Tech Stack
 
 - Go 1.22+
 - MySQL 8.0
+- Redis (Caching)
 - GORM (ORM)
 - Docker & Docker Compose
 - golang-migrate (Database Migrations)
@@ -38,20 +42,30 @@ ledger-link/
 │   │   └── migrate.go
 │   ├── handlers/
 │   │   ├── user_handler.go
-│   │   └── transaction_handler.go
+│   │   ├── transaction_handler.go
+│   │   └── balance_handler.go
 │   ├── services/
 │   │   ├── auth_service.go
 │   │   ├── user_service.go
 │   │   ├── transaction_service.go
 │   │   └── balance_service.go
+│   ├── processor/
+│   │   └── transaction_processor.go
 │   └── models/
-│       └── models.go
+│       ├── models.go
+│       ├── balance.go
+│       ├── transaction.go
+│       └── interfaces.go
 ├── config/
 │   ├── grafana/
 │   │   └── dashboards/
 │   └── prometheus/
 │       └── prometheus.yml
 ├── pkg/
+│   ├── cache/
+│   ├── auth/
+│   ├── logger/
+│   └── middleware/
 ├── docker-compose.yml
 ├── .env
 └── main.go
@@ -98,32 +112,43 @@ DB_USER=ledger_user
 DB_PASSWORD=ledger_pass
 DB_NAME=ledger_link
 
+# Redis
+REDIS_HOST=localhost
+REDIS_PORT=6379
+REDIS_PASSWORD=
+REDIS_DB=0
+
 # Monitoring
 PROMETHEUS_ENABLED=true
 TRACING_ENABLED=true
 ```
 
-## Monitoring Stack
+## Transaction Processing
 
-### Prometheus
+The system implements a robust transaction processing mechanism with the following features:
 
-The application exposes metrics at `/metrics` endpoint, which Prometheus scrapes. Key metrics include:
-- Request latencies
-- Error rates
-- Transaction volumes
-- System metrics
+### Balance Management
+- Atomic operations for balance updates
+- Optimistic locking for concurrent transactions
+- Cache invalidation on balance updates
+- Balance history tracking
+- 5-minute cache TTL for read operations
 
-### Grafana
+### Transfer Process
+1. Create pending transaction
+2. Lock sender and receiver balances
+3. Verify sufficient funds
+4. Update sender balance
+5. Update receiver balance
+6. Record balance history
+7. Update transaction status
+8. Release locks
 
-Pre-configured dashboards are available for:
-- System Overview
-- Transaction Metrics
-- User Activity
-- Error Rates
-
-Default credentials:
-- Username: admin
-- Password: admin
+### Error Handling
+- Automatic rollback on failed transfers
+- Detailed error logging
+- Transaction status tracking
+- Audit trail for all operations
 
 ## API Endpoints
 
@@ -139,13 +164,37 @@ Default credentials:
 - `POST /api/v1/auth/refresh` - Refresh token
 
 ### Transactions
-- `POST /api/v1/transactions` - Create transaction
+- `POST /api/v1/transactions/transfer` - Transfer funds
+- `POST /api/v1/transactions/deposit` - Deposit funds
+- `POST /api/v1/transactions/withdraw` - Withdraw funds
 - `GET /api/v1/transactions` - List transactions
 - `GET /api/v1/transactions/:id` - Get transaction details
 
 ### Balances
-- `GET /api/v1/balances/:user_id` - Get user balance
-- `POST /api/v1/balances/transfer` - Transfer funds
+- `GET /api/v1/balances/current` - Get current balance
+- `GET /api/v1/balances/history` - Get balance history
+
+## Monitoring Stack
+
+### Prometheus Metrics
+- Transaction counts by type and status
+- Balance operation metrics
+- Cache hit/miss ratios
+- Request latencies
+- Error rates
+- Active transactions
+
+### Grafana Dashboards
+- System Overview
+- Transaction Metrics
+- Balance Operations
+- Cache Performance
+- Error Rates
+- User Activity
+
+Default credentials:
+- Username: admin
+- Password: admin
 
 ## Development
 
@@ -169,26 +218,29 @@ go run cmd/migrate/main.go down
 
 ```bash
 # Start dependencies
-docker-compose up -d mysql prometheus grafana
+docker-compose up -d mysql redis prometheus grafana
 
 # Run the application
 go run main.go
 ```
 
-## Docker Support
+### Docker Commands
 
 ```bash
 # Build and start all services
-docker-compose up --build
+docker-compose up --build -d
 
 # Start specific services
-docker-compose up mysql prometheus grafana
+docker-compose up mysql redis prometheus grafana
 
 # View logs
 docker-compose logs -f
 
 # Stop all services
 docker-compose down
+
+# Clean up unused resources
+docker system prune -a --volumes
 ```
 
 ## Contributing
@@ -198,7 +250,3 @@ docker-compose down
 3. Commit your changes (`git commit -m 'Add some amazing feature'`)
 4. Push to the branch (`git push origin feature/amazing-feature`)
 5. Open a Pull Request
-
-## License
-
-This project is licensed under the MIT License - see the LICENSE file for details.
