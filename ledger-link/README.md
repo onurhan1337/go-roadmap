@@ -1,6 +1,6 @@
 # Ledger Link
 
-A robust financial transaction management system built with Go, featuring secure user management, transaction processing, and audit logging.
+A robust financial transaction management system built with Go, featuring secure user management, transaction processing, audit logging, and comprehensive monitoring.
 
 ## Features
 
@@ -10,6 +10,10 @@ A robust financial transaction management system built with Go, featuring secure
 - Comprehensive Audit Logging
 - MySQL Database with GORM
 - Docker Support
+- Monitoring Stack (Prometheus & Grafana)
+- Metrics Collection and Visualization
+- Rate Limiting
+- Request Tracing
 
 ## Tech Stack
 
@@ -18,12 +22,9 @@ A robust financial transaction management system built with Go, featuring secure
 - GORM (ORM)
 - Docker & Docker Compose
 - golang-migrate (Database Migrations)
-
-## Prerequisites
-
-- Go 1.22 or higher
-- Docker and Docker Compose
-- Make (optional)
+- Prometheus (Metrics)
+- Grafana (Visualization)
+- OpenTelemetry (Tracing)
 
 ## Project Structure
 
@@ -35,8 +36,21 @@ ledger-link/
 │   │   ├── migrations/
 │   │   ├── config.go
 │   │   └── migrate.go
+│   ├── handlers/
+│   │   ├── user_handler.go
+│   │   └── transaction_handler.go
+│   ├── services/
+│   │   ├── auth_service.go
+│   │   ├── user_service.go
+│   │   ├── transaction_service.go
+│   │   └── balance_service.go
 │   └── models/
 │       └── models.go
+├── config/
+│   ├── grafana/
+│   │   └── dashboards/
+│   └── prometheus/
+│       └── prometheus.yml
 ├── pkg/
 ├── docker-compose.yml
 ├── .env
@@ -58,191 +72,123 @@ cd ledger-link
 cp .env.example .env
 ```
 
-3. Start the MySQL database using Docker:
+3. Start the services using Docker:
 
 ```bash
 docker-compose up -d
 ```
 
-4. Run the application:
-
-```bash
-go run main.go
-```
-
-## Database Setup
-
-The application uses MySQL as its database. You can run it in two ways:
-
-### Using Docker (Recommended)
-
-```bash
-# Start MySQL container
-docker-compose up -d
-
-# Check container status
-docker-compose ps
-```
-
-### Local MySQL
-
-```bash
-# Create database
-mysql -u root -p
-mysql> CREATE DATABASE ledger_link CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
-```
+4. Access the services:
+- Application API: http://localhost:8080
+- Grafana Dashboard: http://localhost:3000
+- Prometheus: http://localhost:9090
 
 ## Environment Variables
 
 ```env
+# Application
+APP_PORT=8080
+APP_ENV=development
+LOG_LEVEL=debug
+
+# Database
 DB_HOST=localhost
 DB_PORT=3306
 DB_USER=ledger_user
 DB_PASSWORD=ledger_pass
 DB_NAME=ledger_link
+
+# Monitoring
+PROMETHEUS_ENABLED=true
+TRACING_ENABLED=true
 ```
 
-## Database Schema
+## Monitoring Stack
 
-### Users
+### Prometheus
 
-- ID (Primary Key)
-- Username (Unique)
-- Email (Unique)
-- Password Hash
-- Role
-- Created/Updated At
+The application exposes metrics at `/metrics` endpoint, which Prometheus scrapes. Key metrics include:
+- Request latencies
+- Error rates
+- Transaction volumes
+- System metrics
+
+### Grafana
+
+Pre-configured dashboards are available for:
+- System Overview
+- Transaction Metrics
+- User Activity
+- Error Rates
+
+Default credentials:
+- Username: admin
+- Password: admin
+
+## API Endpoints
+
+### User Management
+- `POST /api/v1/users` - Create user
+- `GET /api/v1/users` - List users
+- `GET /api/v1/users/:id` - Get user details
+- `PUT /api/v1/users/:id` - Update user
+- `DELETE /api/v1/users/:id` - Delete user
+
+### Authentication
+- `POST /api/v1/auth/login` - User login
+- `POST /api/v1/auth/refresh` - Refresh token
 
 ### Transactions
-
-- ID (Primary Key)
-- From User ID (Foreign Key)
-- To User ID (Foreign Key)
-- Amount
-- Type (transfer/deposit/withdrawal)
-- Status (pending/completed/failed)
-- Created At
+- `POST /api/v1/transactions` - Create transaction
+- `GET /api/v1/transactions` - List transactions
+- `GET /api/v1/transactions/:id` - Get transaction details
 
 ### Balances
-
-- User ID (Primary Key)
-- Amount
-- Last Updated At
-
-### Audit Logs
-
-- ID (Primary Key)
-- Entity Type
-- Entity ID
-- Action
-- Details
-- Created At
+- `GET /api/v1/balances/:user_id` - Get user balance
+- `POST /api/v1/balances/transfer` - Transfer funds
 
 ## Development
 
 ### Running Tests
 
 ```bash
-go test ./...
+go test ./... -v
 ```
 
 ### Database Migrations
 
-Migrations are automatically handled by GORM auto-migrate feature when the application starts.
+```bash
+# Run migrations
+go run cmd/migrate/main.go up
 
-### Batch Processing System
-
-The project includes a concurrent batch processing system for handling multiple tasks efficiently. Here's how to use it:
-
-```go
-// Create a new batch processor
-processor := batch.NewBatchProcessor(batch.Config{
-    WorkerCount: 5,    // Number of concurrent workers
-    QueueSize:   100,  // Size of the task queue
-    Logger:      logger,
-})
-
-// Start the processor
-ctx, cancel := context.WithCancel(context.Background())
-defer cancel()
-processor.Start(ctx)
-
-// Submit tasks
-task := NewCustomTask()
-err := processor.Submit(task)
-if err != nil {
-    log.Printf("Failed to submit task: %v", err)
-}
-
-// Get processing statistics
-stats := processor.GetStats()
-
-// Graceful shutdown
-processor.Stop()
+# Rollback migrations
+go run cmd/migrate/main.go down
 ```
 
-#### Implementing Custom Tasks
+### Local Development
 
-To create a custom task, implement the `Task` interface:
+```bash
+# Start dependencies
+docker-compose up -d mysql prometheus grafana
 
-```go
-// Task interface
-type Task interface {
-    Process(ctx context.Context) error
-    ID() string
-}
-
-// Example implementation
-type CustomTask struct {
-    id       string
-    data     interface{}
-    duration time.Duration
-}
-
-func NewCustomTask(id string, data interface{}, duration time.Duration) *CustomTask {
-    return &CustomTask{
-        id:       id,
-        data:     data,
-        duration: duration,
-    }
-}
-
-func (t *CustomTask) Process(ctx context.Context) error {
-    select {
-    case <-time.After(t.duration):
-        // Your task processing logic here
-        return nil
-    case <-ctx.Done():
-        return fmt.Errorf("task cancelled: %w", ctx.Err())
-    }
-}
-
-func (t *CustomTask) ID() string {
-    return t.id
-}
+# Run the application
+go run main.go
 ```
-
-Key features of the batch processor:
-
-- Concurrent processing with configurable worker pool
-- Built-in statistics tracking
-- Graceful shutdown support
-- Context-aware task processing
-- Generic interface for custom task implementations
 
 ## Docker Support
-
-Build and run the entire application stack using Docker Compose:
 
 ```bash
 # Build and start all services
 docker-compose up --build
 
-# Stop all services
-docker-compose down
+# Start specific services
+docker-compose up mysql prometheus grafana
 
 # View logs
 docker-compose logs -f
+
+# Stop all services
+docker-compose down
 ```
 
 ## Contributing
