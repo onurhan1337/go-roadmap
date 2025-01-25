@@ -130,17 +130,6 @@
           "legendFormat": "{{operation}}"
         }
       ]
-    },
-    {
-      "title": "Rate Limiting",
-      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 40 },
-      "type": "timeseries",
-      "targets": [
-        {
-          "expr": "rate(ledger_rate_limit_exceeded_total[5m])",
-          "legendFormat": "{{endpoint}}"
-        }
-      ]
     }
   ],
   "refresh": "5s",
@@ -156,4 +145,4 @@
   },
   "title": "Ledger Link Dashboard",
   "version": 0
-} 
+}
