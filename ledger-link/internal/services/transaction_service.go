@@ -111,48 +111,15 @@ func (s *TransactionService) Credit(ctx context.Context, userID uint, amount dec
 		return fmt.Errorf("invalid transaction: %w", err)
 	}
 
-	balance, err := s.balanceSvc.GetBalance(ctx, userID)
-	if err != nil {
-		return fmt.Errorf("failed to get balance: %w", err)
-	}
-
 	if err := s.CreateTransaction(ctx, tx); err != nil {
 		return err
 	}
 
-	if err := balance.AddAmount(amount); err != nil {
-		tx.Status = models.StatusFailed
-		if updateErr := s.ProcessTransaction(ctx, tx); updateErr != nil {
-			s.logger.Error("failed to update failed transaction", "error", updateErr)
-		}
-		return fmt.Errorf("failed to credit amount: %w", err)
+	if err := s.processor.SubmitForBatchProcessing(tx); err != nil {
+		return fmt.Errorf("failed to submit transaction for processing: %w", err)
 	}
 
-	if err := s.balanceSvc.UpdateBalance(ctx, userID, balance.SafeAmount()); err != nil {
-		if rbErr := balance.SubtractAmount(amount); rbErr != nil {
-			s.logger.Error("failed to rollback balance update", "error", rbErr)
-		}
-		tx.Status = models.StatusFailed
-		if updateErr := s.ProcessTransaction(ctx, tx); updateErr != nil {
-			s.logger.Error("failed to update failed transaction", "error", updateErr)
-		}
-		return fmt.Errorf("failed to update balance: %w", err)
-	}
-
-	tx.Status = models.StatusCompleted
-	if err := s.ProcessTransaction(ctx, tx); err != nil {
-		s.logger.Error("failed to update completed transaction", "error", err)
-		return fmt.Errorf("failed to update transaction status: %w", err)
-	}
-
-	details := fmt.Sprintf("Credit transaction %d completed: %s credited to user %d", tx.ID, amount, userID)
-	if err := s.auditSvc.LogAction(ctx, models.EntityTypeTransaction, tx.ID, "credit", details); err != nil {
-		s.logger.Error("failed to log credit audit", "error", err)
-	}
-
-	transactionCounter.WithLabelValues("credit", "success").Inc()
-	balanceGauge.WithLabelValues(fmt.Sprintf("%d", userID)).Set(balance.SafeAmount().InexactFloat64())
-
+	transactionCounter.WithLabelValues("credit", "pending").Inc()
 	return nil
 }
 
